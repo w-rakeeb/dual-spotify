@@ -89,18 +89,21 @@ public partial class App
             ToolActions(ActionButton("Move Second Spotify files…", MoveSecondProfile),
                 ActionButton("View file locations", () => ShowPage("Files")))));
         body.Children.Add(SettingsCard("Spotify installation", PathText(Engine.Spotify),
-            ActionButton("Locate Spotify…", LocateSpotify)));
+            ToolActions(ActionButton("Locate Spotify…", LocateSpotify), ActionButton("Detect Spotify", DetectSpotify))));
         return body;
     }
 
     FrameworkElement CompatibilitySettings()
     {
         var body = Stack();
+        var openStore = ActionButton("Open Microsoft Store Spotify", SpotifyInstallation.OpenStore);
+        openStore.IsEnabled = Engine.StoreAvailable;
         body.Children.Add(SettingsCard("Spotify desktop client",
-            Text(File.Exists(Engine.Spotify) ? "Standalone Spotify installation found." : "Standalone Spotify installation missing."),
-            Text("Dual Spotify uses the standalone Windows desktop client. Install it from Spotify if you currently use the Microsoft Store version."),
-            ToolActions(ActionButton("Verify native setup", VerifySetup),
-                ActionButton("Get Spotify for Windows", () => OpenPath("https://www.spotify.com/download/windows/")))));
+            Text(Engine.DesktopAvailable ? "Standalone installation detected." : "Standalone installation missing."),
+            Text(Engine.StoreAvailable ? "Microsoft Store installation detected." : "Microsoft Store installation not detected."),
+            Text("Main Spotify supports either edition. Second Spotify uses the standalone edition or the Microsoft Store execution alias with a separate profile."),
+            ToolActions(ActionButton("Verify native setup", VerifySetup), openStore,
+                ActionButton("Get Spotify for Windows", OpenSpotifyDownload))));
         body.Children.Add(SettingsCard("Windows requirements",
             Text("Windows 10 or 11 x64 and .NET Framework 4.8. The launcher runs under your Windows account.")));
         return body;
@@ -152,8 +155,8 @@ public partial class App
 
     void VerifySetup()
     {
-        if (!File.Exists(Engine.Spotify))
-            throw new IOException("Locate the standalone Spotify installation first.");
+        if (!Engine.CanOpen(false))
+            throw new IOException("Use Locate Spotify to select an installed Spotify.exe.");
         var state = Engine.Snapshot();
         toast.Show("Spotify detected. Main processes: " + state[0].Length + " · Second processes: " + state[1].Length + ".");
     }
@@ -178,6 +181,7 @@ public partial class App
         var report = new { Version = BuildVersion, Windows = Environment.OSVersion.Version.ToString(),
             StandaloneDetected = File.Exists(Engine.Spotify), SpotifyVersion = File.Exists(Engine.Spotify)
                 ? FileVersionInfo.GetVersionInfo(Engine.Spotify).ProductVersion : null,
+            StoreDetected = Engine.StoreAvailable,
             MainProcesses = state[0].Length, SecondProcesses = state[1].Length,
             CustomStorage = Engine.SecondProfile != Engine.DefaultProfile };
         Engine.WriteDataText("diagnostics.json", new JavaScriptSerializer().Serialize(report));

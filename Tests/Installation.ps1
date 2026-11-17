@@ -1,0 +1,46 @@
+param([string]$SpotifyPath = (Join-Path $env:APPDATA 'Spotify\Spotify.exe'))
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$root = Split-Path $PSScriptRoot -Parent
+$package = [IO.Path]::Combine($root, 'Release', 'Dual-Spotify-Windows.zip')
+$work = [IO.Path]::Combine($root, 'Verification', 'Installation-' + [Guid]::NewGuid().ToString('N'))
+$clean = [IO.Path]::Combine($work, 'Portable launcher')
+[IO.Compression.ZipFile]::ExtractToDirectory($package, $clean)
+
+$assembly = [Reflection.Assembly]::LoadFile([IO.Path]::Combine($clean, 'Dual Spotify.exe'))
+$engine = $assembly.GetType('Engine', $true)
+if ($engine.GetField('Home').GetValue($null) -ne $clean) { throw 'The test must run in the extracted copy.' }
+$install = $assembly.GetType('SpotifyInstallation', $true)
+$valid = $install.GetMethod('IsStandalone')
+$customFolder = [IO.Path]::Combine($work, 'Custom Spotify - ' + [char]0x00E9)
+$dummyFolder = [IO.Path]::Combine($work, 'Invalid executable')
+$null = [IO.Directory]::CreateDirectory($customFolder)
+$null = [IO.Directory]::CreateDirectory($dummyFolder)
+$custom = [IO.Path]::Combine($customFolder, 'Spotify.exe')
+$dummy = [IO.Path]::Combine($dummyFolder, 'Spotify.exe')
+[IO.File]::Copy($SpotifyPath, $custom)
+[IO.File]::WriteAllText($dummy, 'test file')
+if (!$valid.Invoke($null, [object[]]@($custom)) -or $valid.Invoke($null, [object[]]@($dummy))) {
+    throw 'The locator must accept Spotify and reject unrelated files.'
+}
+$engine.GetMethod('SelectSpotify').Invoke($null, [object[]]@($custom))
+$engine.GetMethod('DetectInstallations').Invoke($null, $null)
+if ($engine.GetProperty('Spotify').GetValue($null) -ne $custom -or
+    [IO.File]::ReadAllText([IO.Path]::Combine($clean, 'Data', 'SpotifyPath.txt')) -ne $custom) {
+    throw 'Detect Spotify failed to retain the selected installation.'
+}
+$expectedStore = [bool](Get-AppxPackage -Name SpotifyAB.SpotifyMusic)
+if ($engine.GetProperty('StoreAvailable').GetValue($null) -ne $expectedStore) {
+    throw 'Microsoft Store detection disagrees with the registered packages.'
+}
+$cache = [IO.Path]::Combine($work, 'Isolated Cache')
+$renderer = 'Spotify.exe --type=renderer --user-data-dir="' + $cache + '"'
+$other = 'Spotify.exe --type=renderer --user-data-dir="' + $cache + '-main"'
+$proof = $engine.GetMethod('UsesStoreCache')
+if (!$proof.Invoke($null, [object[]]@($renderer, $cache)) -or
+    $proof.Invoke($null, [object[]]@($other, $cache)) -or
+    $proof.Invoke($null, [object[]]@($renderer.Replace('renderer', 'utility'), $cache))) {
+    throw 'Store launch validation did not distinguish the isolated renderer from other processes.'
+}
+'Verified alternate installation discovery, path persistence, Store package detection, and isolated renderer validation.'

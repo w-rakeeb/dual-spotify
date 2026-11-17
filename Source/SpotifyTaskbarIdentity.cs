@@ -8,7 +8,7 @@ namespace DualSpotifyNative {
   public const string SecondIconFile="second-spotify-circle.ico";
   [DllImport("shell32.dll",CharSet=CharSet.Unicode)]static extern int SetCurrentProcessExplicitAppUserModelID(string id);
   public static void SetManagerIdentity(){Marshal.ThrowExceptionForHR(SetCurrentProcessExplicitAppUserModelID(ManagerId));}
-  public static void SetManagerWindow(IntPtr window,string home){var store=WindowStore(window);try{Write(store,2,"\""+Path.Combine(home,"Dual Spotify.exe")+"\"");Write(store,3,Path.Combine(home,@"Assets\dual-spotify-green.ico")+",0");Write(store,4,"Dual Spotify");Write(store,5,ManagerId);Marshal.ThrowExceptionForHR(store.Commit());}finally{Marshal.FinalReleaseComObject(store);}}
+  public static void SetManagerWindow(IntPtr window,string home){var store=WindowStore(window);try{var exe=Path.Combine(home,"Dual Spotify.exe");Write(store,2,"\""+exe+"\"");Write(store,3,exe+",0");Write(store,4,"Dual Spotify");Write(store,5,ManagerId);Marshal.ThrowExceptionForHR(store.Commit());}finally{Marshal.FinalReleaseComObject(store);}}
   [StructLayout(LayoutKind.Sequential)]struct Key {public Guid Format;public uint Id;public Key(uint id){Format=new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");Id=id;}}
   [StructLayout(LayoutKind.Sequential)]struct Value {public ushort Type,R1,R2,R3;public IntPtr Text,Extra;}
   [ComImport,Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]interface Store {

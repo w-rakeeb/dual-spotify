@@ -4,7 +4,7 @@ Dual Spotify opens two accounts in the official Windows Spotify desktop client. 
 
 ## Open both profiles
 
-1. Install the standalone Windows client from [Spotify](https://www.spotify.com/download/windows/).
+1. Install Spotify from the Microsoft Store or [Spotify's website](https://www.spotify.com/download/windows/).
 2. Download **Dual-Spotify-Windows.zip** from [GitHub Releases](https://github.com/w-rakeeb/dual-spotify/releases/latest), extract the entire ZIP to a writable folder, and open **Dual Spotify.exe**. Keep its files together. No administrator installation is required.
 3. Open **Main Spotify** and **Second Spotify** from Profiles. Sign in to the second account in the second Spotify window.
 4. Use **Settings → General → Repair desktop shortcuts** for shortcuts to the launcher and Second Spotify.
@@ -14,8 +14,10 @@ Dual Spotify opens two accounts in the official Windows Spotify desktop client. 
 ## Files and compatibility
 
 - The launcher runs Spotify with `--mu`, a dedicated cache, process-local AppData folders and direct startup. It keeps the second profile in `Data\Profiles\Second Spotify`. That folder can contain account data.
-- Windows 10 or 11 x64 with .NET Framework 4.8 and the standalone Spotify install in Roaming AppData is the target. The Microsoft Store client has a different install model.
-- **Settings → Storage** can copy the second profile to an empty local folder. Close Second Spotify first. The original folder is retained after a verified copy. For a custom standalone installation, use **Locate Spotify** and select its `Spotify.exe`.
+- Dual Spotify targets Windows 10 or 11 x64 with .NET Framework 4.8. The launcher detects standard standalone installation folders, registered locations, and a running standalone Spotify. If the Profiles page says **Missing**, click **Locate Spotify** and select the installed `Spotify.exe`.
+- Main Spotify opens a running client first, then prefers the standalone edition when both editions are installed. To explicitly open Store Spotify, use **Settings → Compatibility**.
+- On a Store-only machine, Second Spotify uses Spotify's Windows app execution alias and checks that the renderer uses the separate cache. If Windows disables the alias, enable Spotify under **App execution aliases** in Windows Settings, then click **Detect Spotify**. If the Store client cannot open a separate profile, use **Locate Spotify** with the standalone edition.
+- **Settings → Storage** can copy the second profile to an empty local folder. Close Second Spotify first. The original folder is retained after a verified copy. It also offers **Locate Spotify** and **Detect Spotify**.
 - **Settings → Appearance** offers Dark, Light, and System themes and controls whether Process details opens expanded.
 - The automatic update option checks stable GitHub releases at startup, when reopening after one minute, and every fifteen minutes. Ordinary failures retry after a minute. Rate limits back off for fifteen minutes. Each version gets one notice per session. Manual checks are in About and Updates.
 - **Install update** downloads a cancellable ZIP, verifies SHA-256 and expected files, backs up app files, and restarts the launcher. Use the browser ZIP if needed. Spotify manages updates for its own player.

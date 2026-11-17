@@ -16,7 +16,7 @@ using DualSpotify.UI;
 using DualSpotifyNative;
 
 [assembly: AssemblyTitle("Dual Spotify")]
-[assembly: AssemblyVersion("0.2.1.0")]
+[assembly: AssemblyVersion("0.2.2.0")]
 
 public partial class App : Application
 {
@@ -35,6 +35,7 @@ public partial class App : Application
     SpotifyTaskbarIdentity taskbar;
     DispatcherTimer timer;
     ProfileCard mainCard, secondCard;
+    Card installationHelp;
     ProcessDetails mainDetails, secondDetails;
     readonly List<NavItem> navigation = new List<NavItem>();
     int[][] last = { new int[0], new int[0] };
@@ -250,11 +251,17 @@ public partial class App : Application
             finally { foreach (var process in processes.Concat(helpers)) process.Dispose(); }
         }
         mainCard.Quit.IsEnabled = false;
-        if (!File.Exists(Engine.Spotify) && last.All(p => p.Length == 0))
+        for (int i = 0; i < 2; i++)
         {
-            mainCard.Pill.Set("Missing", "warning", "Main Spotify");
-            secondCard.Pill.Set("Missing", "warning", "Second Spotify");
+            var card = i == 0 ? mainCard : secondCard;
+            if (!card.Busy && !card.Running && !Engine.CanOpen(i == 1))
+            {
+                card.Pill.Set(Engine.StoreAvailable ? "Setup needed" : "Missing", "warning", card.NameLabel);
+                card.Open.Content = "Locate Spotify";
+                Ui.Name(card.Open, "Locate Spotify for " + card.NameLabel);
+            }
         }
+        installationHelp.Visibility = Engine.CanOpen(true) ? Visibility.Collapsed : Visibility.Visible;
     }
 
     void ShowPage(string page)
@@ -264,6 +271,7 @@ public partial class App : Application
         foreach (var item in navigation)
             item.Active(item.Page == page);
         mainCard = secondCard = null;
+        installationHelp = null;
         content.Content = page == "Profiles" ? Profiles() : page == "Settings" ? Settings() :
             page == "Files" ? Files() : page == "Updates" ? Updates() : About();
         pageScroll.ScrollToTop();
@@ -273,12 +281,17 @@ public partial class App : Application
     FrameworkElement Profiles()
     {
         var body = Page("Profiles", "Run two Spotify accounts side by side.");
-        mainCard = Profile("Main Spotify", "Default desktop profile", "spotify.png", OpenMain);
+        mainCard = Profile("Main Spotify", "Default desktop profile", "spotify.png", () => OpenOrLocate(false));
         mainCard.Quit.ToolTip = "Use Quit Spotify in the main client.";
-        secondCard = Profile("Second Spotify", "Separate sign-in and profile data", "second-spotify.png", OpenSecond);
+        secondCard = Profile("Second Spotify", "Separate sign-in and profile data", "second-spotify.png", () => OpenOrLocate(true));
         secondCard.Quit.Click += (s, e) => QuitSecond();
         body.Children.Add(mainCard);
         body.Children.Add(secondCard);
+        installationHelp = SettingsCard("Spotify installation",
+            Text(Engine.StoreAvailable ? "Microsoft Store Spotify was found. To open a second profile, enable its Spotify execution alias in Windows Settings or locate a standalone Spotify.exe." :
+                "If Spotify is already installed in another folder, choose its Spotify.exe."),
+            ToolActions(ActionButton("Detect Spotify", DetectSpotify), ActionButton("Get Spotify for Windows", OpenSpotifyDownload)));
+        body.Children.Add(installationHelp);
         var columns = new Grid { Margin = new Thickness(0, 12, 0, 0) };
         columns.ColumnDefinitions.Add(new ColumnDefinition());
         columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
@@ -298,9 +311,15 @@ public partial class App : Application
         var hint = Text("Client processes only · Memory is working set · CPU is sampled across all cores.", 12, "text.muted");
         hint.Margin = new Thickness(0, 20, 0, 0);
         body.Children.Add(hint);
-        if (!File.Exists(Engine.Spotify))
-            body.Children.Add(ActionButton("Get Spotify for Windows", () => OpenPath("https://www.spotify.com/download/windows/")));
         return body;
+    }
+
+    void OpenOrLocate(bool second)
+    {
+        if (Engine.CanOpen(second) || last[second ? 1 : 0].Length > 0)
+            RunProfile(second, true);
+        else
+            Safe(LocateSpotify);
     }
 
     ProfileCard Profile(string name, string description, string artwork, Action open)
@@ -333,7 +352,7 @@ public partial class App : Application
         columns.ColumnDefinitions.Add(new ColumnDefinition());
         var profiles = Stack();
         profiles.Margin = new Thickness(0, 0, 6, 0);
-        profiles.Children.Add(PathCard("Official Spotify client", Engine.Spotify, Path.GetDirectoryName(Engine.Spotify)));
+        profiles.Children.Add(PathCard("Standalone Spotify executable", Engine.Spotify, Path.GetDirectoryName(Engine.Spotify)));
         profiles.Children.Add(PathCard("Second Spotify profile", Engine.SecondProfile, Engine.SecondProfile));
         var manager = Stack();
         manager.Margin = new Thickness(6, 0, 0, 0);
@@ -367,14 +386,36 @@ public partial class App : Application
     {
         if (busy || Engine.Snapshot()[1].Length > 0)
             throw new InvalidOperationException("Quit Second Spotify before changing the installation.");
-        var picker = new Microsoft.Win32.OpenFileDialog { Filter = "Spotify executable|Spotify.exe", CheckFileExists = true };
+        var picker = new Microsoft.Win32.OpenFileDialog { Title = "Locate standalone Spotify.exe",
+            Filter = "Spotify executable (Spotify.exe)|Spotify.exe", CheckFileExists = true };
+        var folder = Path.GetDirectoryName(Engine.Spotify);
+        if (Directory.Exists(folder))
+            picker.InitialDirectory = folder;
         if (picker.ShowDialog(window) != true)
             return;
         if (busy || Engine.Snapshot()[1].Length > 0)
             throw new InvalidOperationException("Quit Second Spotify before changing the installation.");
         Engine.SelectSpotify(picker.FileName);
-        ShowPage("Settings");
+        ShowPage(currentPage);
         toast.Show("Spotify installation saved.");
+        RefreshNow();
+    }
+
+    void OpenSpotifyDownload()
+    {
+        OpenPath("https://www.spotify.com/download/windows/");
+    }
+
+    void DetectSpotify()
+    {
+        if (busy || Engine.Snapshot()[1].Length > 0)
+            throw new InvalidOperationException("Quit Second Spotify before changing the installation.");
+        Engine.DetectInstallations();
+        ShowPage(currentPage);
+        toast.Show(Engine.DesktopAvailable ? "Standalone Spotify found." :
+            Engine.StoreSecondAvailable ? "Microsoft Store Spotify and its execution alias found." :
+            Engine.StoreAvailable ? "Microsoft Store Spotify found. Enable the Spotify execution alias for the second profile." :
+            "Spotify was not detected. Use Locate Spotify to browse for Spotify.exe.");
         RefreshNow();
     }
 
