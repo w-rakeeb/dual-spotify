@@ -16,7 +16,7 @@ using DualSpotify.UI;
 using DualSpotifyNative;
 
 [assembly: AssemblyTitle("Dual Spotify")]
-[assembly: AssemblyVersion("0.2.0.0")]
+[assembly: AssemblyVersion("0.2.1.0")]
 
 public partial class App : Application
 {

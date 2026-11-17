@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using DualSpotify;
 using DualSpotify.UI;
@@ -26,25 +27,65 @@ public partial class App
     FrameworkElement Updates()
     {
         var body = Page("Updates", "Stable releases from GitHub. Your Spotify profiles stay in place.");
-        body.Children.Add(UpdatePanel());
+        body.Children.Add(UpdatePanel(true));
         return body;
     }
 
-    FrameworkElement UpdatePanel()
+    static WrapPanel UpdateActions(string id, params Button[] buttons)
+    {
+        var row = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+        AutomationProperties.SetAutomationId(row, id);
+        foreach (var button in buttons)
+        {
+            button.Margin = new Thickness(0, 12, 12, 0);
+            button.MinHeight = 40;
+            row.Children.Add(button);
+        }
+        return row;
+    }
+
+    FrameworkElement UpdatePanel(bool expanded = false)
     {
         updateTitle = Text("", Theme.TitleSize, "text.primary", true);
         updateDetail = Text("", Theme.BodySize, "text.secondary");
+        updateDetail.Margin = new Thickness(0, 8, 0, 0);
         updateChecked = Text("", Theme.NoteSize, "text.muted");
-        updateProgress = new ProgressBar { Height = 5, Maximum = 100, Margin = new Thickness(0, 8, 0, 0) };
-        checkUpdateButton = ActionButton("Check for updates", () => CheckUpdates(true));
-        installUpdateButton = ActionButton("Install update", InstallUpdate);
-        installUpdateButton.Style = Theme.Style("Primary");
-        cancelUpdateButton = ActionButton("Cancel download", () => updateCancellation.Cancel());
-        var card = SettingsCard("App updates", updateTitle, updateDetail, updateChecked, updateProgress,
-            ToolActions(checkUpdateButton, installUpdateButton, cancelUpdateButton,
-                ActionButton("Download ZIP in browser", () => OpenPath(Releases))));
+        updateChecked.Margin = new Thickness(0, 12, 0, 0);
+        updateProgress = new ProgressBar { IsIndeterminate = true, Height = 4, Margin = new Thickness(0, 16, 0, 0) };
+        Theme.Bind(updateProgress, Control.ForegroundProperty, "accent.default");
+        Ui.Name(updateProgress, "Checking GitHub for updates");
+        AutomationProperties.SetAutomationId(updateProgress, "UpdateCheckProgress");
+        AutomationProperties.SetAutomationId(updateTitle, "UpdateResult");
+        AutomationProperties.SetAutomationId(updateChecked, "UpdateLastChecked");
+        checkUpdateButton = Ui.Button("Check for updates", false, () => CheckUpdates(true));
+        AutomationProperties.SetAutomationId(checkUpdateButton, "UpdateCheckButton");
+        installUpdateButton = Ui.Button("Install update", true, InstallUpdate);
+        cancelUpdateButton = Ui.Button("Cancel download", false, () => { if (updateCancellation != null) updateCancellation.Cancel(); });
+        var panel = Stack();
+        foreach (var item in new UIElement[] { updateTitle, updateDetail, updateChecked, updateProgress,
+            UpdateActions("UpdatePrimaryActions", checkUpdateButton, installUpdateButton, cancelUpdateButton) })
+            panel.Children.Add(item);
+        var hint = Text("The launcher restarts after installation. Spotify players and profiles stay in place.",
+            Theme.NoteSize, "text.muted");
+        hint.Margin = new Thickness(0, 16, 0, 0);
+        panel.Children.Add(hint);
+        var body = Stack();
+        body.Children.Add(Group(panel));
+        if (expanded)
+        {
+            body.Children.Add(new Card { Padding = new Thickness(0), Margin = new Thickness(0, 12, 0, 12),
+                Child = Choice("Notify me about available updates", "Show a notice at startup, on reopen and during periodic checks.",
+                    Preferences.Current.AutoUpdates, value => Preferences.Current.AutoUpdates = value) });
+            body.Children.Add(Text("Optional checks run every 15 minutes, with a one-minute reopen throttle. Failed checks retry after a minute. GitHub rate limits back off for 15 minutes. Each available version is announced once per session.",
+                Theme.BodySize, "text.secondary"));
+            var links = UpdateActions("UpdateSecondaryActions",
+                ActionButton("Download ZIP in browser", () => OpenPath(availableUpdate == null ? Releases : availableUpdate.Download)),
+                ActionButton("View releases on GitHub", () => OpenPath("https://github.com/" + UpdateService.Repository + "/releases")));
+            links.Margin = new Thickness(0, 12, 0, 0);
+            body.Children.Add(links);
+        }
         ShowUpdateState();
-        return card;
+        return body;
     }
 
     void ClearUpdateView()
@@ -77,7 +118,8 @@ public partial class App
         updateTitle.Text = updateFeedback.Title;
         updateDetail.Text = updateFeedback.Detail;
         updateChecked.Text = updateFeedback.LastChecked.HasValue
-            ? "Last checked: " + updateFeedback.LastChecked.Value.ToString("g") : "Not checked this session";
+            ? "Last checked: " + updateFeedback.LastChecked.Value.ToString("G") : "Not checked in this session";
+        checkUpdateButton.Content = checkingUpdates ? "Checking…" : "Check for updates";
         checkUpdateButton.IsEnabled = !checkingUpdates && !busy && updateCancellation == null;
         installUpdateButton.IsEnabled = availableUpdate != null && checkUpdateButton.IsEnabled;
         cancelUpdateButton.Visibility = updateCancellation == null ? Visibility.Collapsed : Visibility.Visible;
@@ -97,7 +139,10 @@ public partial class App
         ShowUpdateState();
         try
         {
-            var latest = await Task.Run(() => UpdateService.GetLatest());
+            var request = Task.Run(() => UpdateService.GetLatest());
+            if (manual)
+                await Task.WhenAll(request, Task.Delay(700));
+            var latest = await request;
             var installed = UpdateService.ParseVersion(BuildVersion);
             if (latest.Version > installed)
                 availableUpdate = latest;
