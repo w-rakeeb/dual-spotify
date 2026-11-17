@@ -36,10 +36,13 @@ public partial class App {
   versionTools=new StackPanel{Orientation=Orientation.Horizontal,VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(0,0,8,0)};var version=Text("v"+BuildVersion,12,"text.muted");version.VerticalAlignment=VerticalAlignment.Center;versionTools.Children.Add(version);
   var update=Ui.IconButton("\uE72C","Check for updates",CheckUpdatesFromShortcut);update.Width=36;update.Height=36;update.MinWidth=36;update.FontSize=18;update.Padding=new Thickness(0);update.Margin=new Thickness(4,0,0,0);versionTools.Children.Add(update);Grid.SetColumn(versionTools,1);left.Children.Add(versionTools);footerGrid.Children.Add(left);
   var credit=new CreatorCredit(url=>OpenPath(url)){Margin=new Thickness(24,0,24,0)};Grid.SetColumn(credit,1);footerGrid.Children.Add(credit);footer.Child=footerGrid;Grid.SetRow(footer,2);Grid.SetColumnSpan(footer,2);shell.Children.Add(footer);
-  content=new ContentControl{Margin=new Thickness(24,16,0,24),HorizontalContentAlignment=HorizontalAlignment.Stretch};var scroll=new ScrollViewer{Content=content,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,Style=Theme.Style("ThinScrollViewer"),Padding=new Thickness(0,0,24,0)};scroll.Margin=new Thickness(0,0,4,0);Grid.SetRow(scroll,1);Grid.SetColumn(scroll,1);shell.Children.Add(scroll);
+  content=new ContentControl{Margin=new Thickness(24,16,0,24),HorizontalContentAlignment=HorizontalAlignment.Stretch};pageScroll=new ScrollViewer{Content=content,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,Style=Theme.Style("ThinScrollViewer"),Padding=new Thickness(0,0,24,0)};pageScroll.Margin=new Thickness(0,0,4,0);Grid.SetRow(pageScroll,1);Grid.SetColumn(pageScroll,1);shell.Children.Add(pageScroll);
   // A single quiet divider spans caption, body and footer.
   var line=new Border{Width=1,HorizontalAlignment=HorizontalAlignment.Right,IsHitTestVisible=false};Theme.Bind(line,Border.BackgroundProperty,"border.sidebar");Grid.SetRowSpan(line,3);shell.Children.Add(line);
   toast=new Toast();Grid.SetRow(toast,1);Grid.SetColumn(toast,1);shell.Children.Add(toast);
+  updateNotice=new UpdateNotice();
+  updateNotice.Install=()=>{ShowManager();ShowPage("Updates");};
+  Grid.SetColumn(updateNotice,1);Grid.SetRowSpan(updateNotice,3);shell.Children.Add(updateNotice);
   var frame=new Border{Child=shell,CornerRadius=new CornerRadius(12),BorderThickness=new Thickness(1)};Theme.Bind(frame,Border.BackgroundProperty,"bg.window");Theme.Bind(frame,Border.BorderBrushProperty,"border.subtle");window.Content=frame;
   window.PreviewKeyDown+=(s,e)=>{if(e.Key==Key.Tab||e.Key==Key.Left||e.Key==Key.Right||e.Key==Key.Up||e.Key==Key.Down)Theme.Resources["KeyboardFocusVisibility"]=Visibility.Visible;};window.PreviewMouseDown+=(s,e)=>Theme.Resources["KeyboardFocusVisibility"]=Visibility.Collapsed;window.SizeChanged+=(s,e)=>Responsive();
  }

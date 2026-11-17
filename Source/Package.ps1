@@ -23,7 +23,7 @@ try {
         }
     } finally { $archive.Dispose() }
     $null = $packageType.GetMethod('Validate').Invoke($null, [object[]]@($staging))
-    if ([IO.File]::Exists($package)) { [IO.File]::Replace($staging, $package, $null) }
+    if ([IO.File]::Exists($package)) { [IO.File]::Replace($staging, $package, [NullString]::Value) }
     else { [IO.File]::Move($staging, $package) }
 } finally {
     if ([IO.File]::Exists($staging)) { [IO.File]::Delete($staging) }

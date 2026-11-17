@@ -16,21 +16,20 @@ using DualSpotify.UI;
 using DualSpotifyNative;
 
 [assembly: AssemblyTitle("Dual Spotify")]
-[assembly: AssemblyVersion("0.1.3.0")]
+[assembly: AssemblyVersion("0.2.0.0")]
 
 public partial class App : Application
 {
     const string BuildVersion = UpdateService.CurrentVersion;
     const string SignalPrefix = @"Local\WrakeebDualSpotify.";
-    static readonly string PreferencesFile = Path.Combine(Engine.Data, "Preferences.txt");
-    public static bool SecondTray = true;
-    bool trayOnClose = true, exiting, busy, refreshing;
-    string mode = "Dark";
+    bool exiting, busy, refreshing;
+    string currentPage = "Profiles";
     Window window;
     Grid shell;
     ColumnDefinition railColumn;
     TextBlock brand;
     ContentControl content;
+    ScrollViewer pageScroll;
     Toast toast;
     ManagerTray tray;
     SpotifyTaskbarIdentity taskbar;
@@ -39,6 +38,7 @@ public partial class App : Application
     ProcessDetails mainDetails, secondDetails;
     readonly List<NavItem> navigation = new List<NavItem>();
     int[][] last = { new int[0], new int[0] };
+    int[][] lastChildren = { new int[0], new int[0] };
 
     [STAThread]
     public static int Main(string[] args)
@@ -49,6 +49,7 @@ public partial class App : Application
             return 1;
         }
         bool direct = args.Contains("--second");
+        bool startup = args.Contains("--startup");
         bool created;
         string token;
         using (var sha = SHA256.Create())
@@ -59,14 +60,15 @@ public partial class App : Application
         {
             if (!created)
             {
-                (direct ? second : show).Set();
+                if (!startup)
+                    (direct ? second : show).Set();
                 return 0;
             }
             SpotifyTaskbarIdentity.SetManagerIdentity();
             var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             var showWait = ThreadPool.RegisterWaitForSingleObject(show, (s, t) => app.Dispatcher.BeginInvoke(new Action(app.ShowManager)), null, -1, false);
             var secondWait = ThreadPool.RegisterWaitForSingleObject(second, (s, t) => app.Dispatcher.BeginInvoke(new Action(app.OpenSecond)), null, -1, false);
-            app.Startup += (s, e) => app.Start(direct);
+            app.Startup += (s, e) => app.Start(direct, startup);
             try { return app.Run(); }
             catch (Exception ex)
             {
@@ -77,12 +79,11 @@ public partial class App : Application
         }
     }
 
-    void Start(bool direct)
+    void Start(bool direct, bool startup)
     {
-        LoadPreferences();
-        Theme.Apply(mode);
+        Preferences.Load(Engine.Data);
+        Theme.Apply(Preferences.Current.ThemeMode);
         Theme.InitStyles();
-        Resources.MergedDictionaries.Add(Theme.Resources);
         BuildShell();
         MainWindow = window;
         taskbar = new SpotifyTaskbarIdentity(Engine.Home);
@@ -94,20 +95,33 @@ public partial class App : Application
             if (exiting)
                 return;
             e.Cancel = true;
-            if (trayOnClose)
+            if (Preferences.Current.TrayOnClose)
                 window.Hide();
             else
                 ExitManager();
         };
         ShowPage("Profiles");
         timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-        timer.Tick += async (s, e) => await Refresh();
+        timer.Tick += async (s, e) => { await Refresh(); CheckUpdateSchedule(false); };
         timer.Start();
+        window.Activated += (s, e) => CheckUpdateSchedule(true);
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += WindowsPreferencesChanged;
         if (direct)
             OpenSecond();
-        else
+        else if (startup && Preferences.Current.StartSecondWithWindows)
+            RunProfile(true, true, Preferences.Current.StartSecondMinimized);
+        else if (!startup)
             ShowManager();
         RefreshNow();
+        CheckUpdateSchedule(false);
+    }
+
+    void WindowsPreferencesChanged(object sender, Microsoft.Win32.UserPreferenceChangedEventArgs args)
+    {
+        if (args.Category == Microsoft.Win32.UserPreferenceCategory.General ||
+            args.Category == Microsoft.Win32.UserPreferenceCategory.Accessibility ||
+            args.Category == Microsoft.Win32.UserPreferenceCategory.Color)
+            Dispatcher.BeginInvoke(new Action(() => Theme.Apply(Preferences.Current.ThemeMode)));
     }
 
     async void RefreshNow() { await Refresh(); }
@@ -122,12 +136,33 @@ public partial class App : Application
         window.Activate();
     }
 
-    void ExitManager()
+    async void ExitManager()
+    {
+        if (updateCancellation != null)
+        {
+            exitAfterDownload = true;
+            updateCancellation.Cancel();
+            return;
+        }
+        if (busy || exiting)
+            return;
+        if (!Preferences.Current.KeepSecondRunning)
+        {
+            busy = true;
+            try { await Task.Run(() => Engine.Quit(true)); }
+            catch (Exception ex) { ShowManager(); toast.Show(ex.Message); return; }
+            finally { busy = false; }
+        }
+        ShutdownManager();
+    }
+
+    void ShutdownManager()
     {
         exiting = true;
         timer.Stop();
         tray.Dispose();
         taskbar.Dispose();
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged -= WindowsPreferencesChanged;
         Shutdown();
     }
 
@@ -138,10 +173,15 @@ public partial class App : Application
         refreshing = true;
         try
         {
-            var snapshot = await Task.Run(() => Engine.Snapshot());
+            var snapshot = await Task.Run(() =>
+            {
+                int[][] children;
+                return Tuple.Create(Engine.Scan(out children), children);
+            });
             if (!exiting && !busy)
             {
-                last = snapshot;
+                last = snapshot.Item1;
+                lastChildren = snapshot.Item2;
                 UpdateProfiles();
             }
         }
@@ -153,7 +193,7 @@ public partial class App : Application
     void OpenSecond() { RunProfile(true, true); }
     void QuitSecond() { RunProfile(true, false); }
 
-    async void RunProfile(bool second, bool opening)
+    async void RunProfile(bool second, bool opening, bool minimized = false)
     {
         if (busy || exiting)
             return;
@@ -166,7 +206,7 @@ public partial class App : Application
             await Task.Run(() =>
             {
                 if (opening)
-                    Engine.Open(second);
+                    Engine.Open(second, minimized);
                 else
                     Engine.Quit(second);
             });
@@ -192,7 +232,7 @@ public partial class App : Application
     {
         tray.Update(last[1].Length > 0, last[0].Length > 0);
         var secondProcesses = last[1].Select(Engine.TryProcess).Where(p => p != null).ToArray();
-        try { taskbar.Update(secondProcesses, true); }
+        try { taskbar.Update(secondProcesses, Preferences.Current.SeparateTaskbar); }
         finally { foreach (var process in secondProcesses) process.Dispose(); }
         if (mainCard == null)
             return;
@@ -201,12 +241,13 @@ public partial class App : Application
             var card = i == 0 ? mainCard : secondCard;
             var details = i == 0 ? mainDetails : secondDetails;
             var processes = last[i].Select(Engine.TryProcess).Where(p => p != null).ToArray();
+            var helpers = lastChildren[i].Select(Engine.TryProcess).Where(p => p != null).ToArray();
             try
             {
                 card.Update(processes, i == 0 || Directory.Exists(Engine.SecondProfile));
-                details.Update(PerformanceSnapshot.Capture(processes));
+                details.Update(PerformanceSnapshot.Capture(processes, helpers));
             }
-            finally { foreach (var process in processes) process.Dispose(); }
+            finally { foreach (var process in processes.Concat(helpers)) process.Dispose(); }
         }
         mainCard.Quit.IsEnabled = false;
         if (!File.Exists(Engine.Spotify) && last.All(p => p.Length == 0))
@@ -218,11 +259,14 @@ public partial class App : Application
 
     void ShowPage(string page)
     {
+        currentPage = page;
+        ClearUpdateView();
         foreach (var item in navigation)
             item.Active(item.Page == page);
         mainCard = secondCard = null;
         content.Content = page == "Profiles" ? Profiles() : page == "Settings" ? Settings() :
             page == "Files" ? Files() : page == "Updates" ? Updates() : About();
+        pageScroll.ScrollToTop();
         UpdateProfiles();
     }
 
@@ -248,8 +292,10 @@ public partial class App : Application
         columns.Children.Add(mainDetails);
         columns.Children.Add(divider);
         columns.Children.Add(secondDetails);
-        body.Children.Add(new Expander { Header = "Process details", IsExpanded = true, Content = columns, Margin = new Thickness(0, 12, 0, 0) });
-        var hint = Text("Metrics cover each profile’s main process.", 12, "text.muted");
+        var details = new Expander { Header = "Process details", IsExpanded = Preferences.Current.ExpandProcesses,
+            Content = columns, Margin = new Thickness(0, 12, 0, 0) };
+        body.Children.Add(details);
+        var hint = Text("Client processes only · Memory is working set · CPU is sampled across all cores.", 12, "text.muted");
         hint.Margin = new Thickness(0, 20, 0, 0);
         body.Children.Add(hint);
         if (!File.Exists(Engine.Spotify))
@@ -265,40 +311,9 @@ public partial class App : Application
         return card;
     }
 
-    FrameworkElement Settings()
-    {
-        var body = Page("Settings", "Choose how Dual Spotify looks and behaves.");
-        var appearance = Stack();
-        var themePicker = new ComboBox { MinWidth = 130, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) };
-        foreach (string option in new[] { "Dark", "Light", "System" })
-            themePicker.Items.Add(option);
-        themePicker.SelectedItem = mode;
-        Ui.Name(themePicker, "Appearance");
-        themePicker.SelectionChanged += (s, e) => Safe(() => { mode = (string)themePicker.SelectedItem; Theme.Apply(mode); SavePreferences(); });
-        appearance.Children.Add(Text("Appearance", 14, "text.primary", true));
-        appearance.Children.Add(themePicker);
-        body.Children.Add(Group(appearance));
-        var behavior = Stack();
-        behavior.Children.Add(Choice("Close to tray", "Keep the dashboard available from the notification area.", trayOnClose, value => trayOnClose = value));
-        behavior.Children.Add(Ui.Divider());
-        behavior.Children.Add(Choice("Second Spotify tray icon", "Show a second profile shortcut while it is running.", SecondTray, value => SecondTray = value));
-        body.Children.Add(Group(behavior));
-        var install = Stack();
-        install.Children.Add(Text("Spotify installation", Theme.TitleSize, "text.primary", true));
-        install.Children.Add(Text(Engine.Spotify, Theme.NoteSize, "text.secondary"));
-        install.Children.Add(ActionButton("Locate Spotify…", LocateSpotify));
-        body.Children.Add(Group(install));
-        body.Children.Add(ActionButton("Add Second Spotify desktop shortcut", () =>
-        {
-            CreateShortcut();
-            toast.Show("Second Spotify shortcut added.");
-        }));
-        return body;
-    }
-
     FrameworkElement Choice(string title, string copy, bool selected, Action<bool> change)
     {
-        var row = new SettingRow(title, copy);
+        var row = new SettingRow(title, copy) { Margin = new Thickness(0), MinHeight = 76 };
         row.Toggle.IsChecked = selected;
         row.Toggle.Checked += (s, e) => SaveChoice(row.Toggle, change);
         row.Toggle.Unchecked += (s, e) => SaveChoice(row.Toggle, change);
@@ -307,15 +322,29 @@ public partial class App : Application
 
     void SaveChoice(ToggleSwitch toggle, Action<bool> change)
     {
-        Safe(() => { change(toggle.IsChecked == true); SavePreferences(); UpdateProfiles(); });
+        Safe(() => { change(toggle.IsChecked == true); Preferences.Save(); UpdateProfiles(); });
     }
 
     FrameworkElement Files()
     {
         var body = Page("Files", "View your player and profile locations.");
-        body.Children.Add(PathCard("Official Spotify client", Engine.Spotify, Path.GetDirectoryName(Engine.Spotify)));
-        body.Children.Add(PathCard("Second Spotify profile", Engine.SecondProfile, Engine.SecondProfile));
-        body.Children.Add(PathCard("Dual Spotify folder", Engine.Home, Engine.Home));
+        var columns = new Grid();
+        columns.ColumnDefinitions.Add(new ColumnDefinition());
+        columns.ColumnDefinitions.Add(new ColumnDefinition());
+        var profiles = Stack();
+        profiles.Margin = new Thickness(0, 0, 6, 0);
+        profiles.Children.Add(PathCard("Official Spotify client", Engine.Spotify, Path.GetDirectoryName(Engine.Spotify)));
+        profiles.Children.Add(PathCard("Second Spotify profile", Engine.SecondProfile, Engine.SecondProfile));
+        var manager = Stack();
+        manager.Margin = new Thickness(6, 0, 0, 0);
+        manager.Children.Add(PathCard("Dual Spotify folder", Engine.Home, Engine.Home));
+        manager.Children.Add(PathCard("Launcher data", Engine.Data, Engine.Data));
+        var backups = Path.Combine(Engine.Home, "Backups");
+        manager.Children.Add(PathCard("App update backups", backups, backups));
+        Grid.SetColumn(manager, 1);
+        columns.Children.Add(profiles);
+        columns.Children.Add(manager);
+        body.Children.Add(columns);
         return body;
     }
 
@@ -323,10 +352,14 @@ public partial class App : Application
     {
         var panel = Stack();
         panel.Children.Add(Text(name, 14, "text.primary", true));
-        panel.Children.Add(Text(path, 12, "text.secondary"));
-        var button = ActionButton("Open folder", () => OpenPath(folder));
-        button.IsEnabled = Directory.Exists(folder);
-        panel.Children.Add(button);
+        panel.Children.Add(PathText(path));
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        var open = Ui.IconButton("\uE838", "Open " + name, () => Safe(() => OpenPath(folder)));
+        open.IsEnabled = Directory.Exists(folder);
+        actions.Children.Add(open);
+        actions.Children.Add(Ui.IconButton("\uE8C8", "Copy " + name + " path",
+            () => Safe(() => { Clipboard.SetText(path); toast.Show("Path copied."); })));
+        panel.Children.Add(actions);
         return Group(panel);
     }
 
@@ -337,6 +370,8 @@ public partial class App : Application
         var picker = new Microsoft.Win32.OpenFileDialog { Filter = "Spotify executable|Spotify.exe", CheckFileExists = true };
         if (picker.ShowDialog(window) != true)
             return;
+        if (busy || Engine.Snapshot()[1].Length > 0)
+            throw new InvalidOperationException("Quit Second Spotify before changing the installation.");
         Engine.SelectSpotify(picker.FileName);
         ShowPage("Settings");
         toast.Show("Spotify installation saved.");
@@ -345,51 +380,14 @@ public partial class App : Application
 
     FrameworkElement About()
     {
-        var body = Page("About", "Dual Spotify");
-        body.Children.Add(Group(Text("Open two accounts in the official Spotify desktop client. Sign in inside each Spotify window.", 14)));
-        body.Children.Add(new CreatorCredit(OpenPath));
+        var body = Page("About", "Two Spotify accounts on one Windows desktop.");
+        body.Children.Add(SettingsCard("Dual Spotify  ·  " + BuildVersion,
+            Text("Uses the official Spotify desktop client.", Theme.BodySize, "text.secondary"), new CreatorCredit(OpenPath)));
+        body.Children.Add(UpdatePanel());
+        body.Children.Add(SettingsCard("Getting started",
+            Text("Open Main Spotify and Second Spotify from Profiles. Sign in to each account in its own window."),
+            Text("Use Settings to repair shortcuts, manage profile storage, or change how the launcher starts.")));
         return body;
-    }
-
-    void LoadPreferences()
-    {
-        if (!File.Exists(PreferencesFile))
-            return;
-        var lines = File.ReadAllLines(PreferencesFile);
-        if (lines.Length != 3)
-            return;
-        if (new[] { "Dark", "Light", "System" }.Contains(lines[0]))
-            mode = lines[0];
-        bool.TryParse(lines[1], out trayOnClose);
-        bool.TryParse(lines[2], out SecondTray);
-    }
-
-    void SavePreferences()
-    {
-        Directory.CreateDirectory(Engine.Data);
-        var staging = PreferencesFile + ".tmp";
-        File.WriteAllLines(staging, new[] { mode, trayOnClose.ToString(), SecondTray.ToString() });
-        if (File.Exists(PreferencesFile))
-            File.Replace(staging, PreferencesFile, null);
-        else
-            File.Move(staging, PreferencesFile);
-    }
-
-    static void CreateShortcut()
-    {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Second Spotify.lnk");
-        var executable = Path.Combine(Engine.Home, "Dual Spotify.exe");
-        var shellType = Type.GetTypeFromProgID("WScript.Shell", true);
-        dynamic shell = Activator.CreateInstance(shellType);
-        dynamic shortcut = shell.CreateShortcut(path);
-        if (File.Exists(path) && !String.Equals((string)shortcut.TargetPath, executable, StringComparison.OrdinalIgnoreCase))
-            throw new IOException("A different Second Spotify shortcut already exists on your desktop.");
-        shortcut.TargetPath = executable;
-        shortcut.Arguments = "--second";
-        shortcut.WorkingDirectory = Engine.Home;
-        shortcut.IconLocation = Path.Combine(Engine.Home, "Assets", SpotifyTaskbarIdentity.SecondIconFile) + ",0";
-        shortcut.Save();
-        SpotifyTaskbarIdentity.SetShortcut(path);
     }
 
     static void OpenPath(string path) { using (Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })) { } }

@@ -1,3 +1,4 @@
+param([string]$PreviousPackage)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root = Split-Path $PSScriptRoot -Parent
@@ -9,7 +10,13 @@ $updater = [IO.Path]::Combine($root, 'Dual Spotify Updater.exe')
 $version = $assembly.GetType('DualSpotify.UpdateService').GetField('CurrentVersion').GetRawConstantValue()
 $digest = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
 
-[IO.Compression.ZipFile]::ExtractToDirectory($package, $target)
+[IO.Compression.ZipFile]::ExtractToDirectory($(if ($PreviousPackage) { $PreviousPackage } else { $package }), $target)
+if ($PreviousPackage) {
+    $oldUpdater = [IO.Path]::Combine($work, 'Dual Spotify Updater.exe')
+    [IO.File]::Copy([IO.Path]::Combine($target, 'Dual Spotify Updater.exe'), $oldUpdater)
+    $updater = $oldUpdater
+}
+$installed = [IO.Path]::Combine($target, 'Dual Spotify.exe')
 $profile = [IO.Path]::Combine($target, 'Data', 'Keep.txt')
 [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($profile))
 [IO.File]::WriteAllText($profile, 'profile sentinel')
@@ -43,5 +50,8 @@ if ($backup.Count -ne 1 -or [IO.File]::ReadAllText((Join-Path $backup[0].FullNam
 }
 if ((Get-FileHash -LiteralPath $readme).Hash -ne (Get-FileHash -LiteralPath (Join-Path $root 'README.md')).Hash) {
     throw 'The updated README does not match the package.'
+}
+if ([Reflection.AssemblyName]::GetAssemblyName($installed).Version.ToString(3) -ne $version) {
+    throw 'The updater did not install the expected version.'
 }
 'Package checks passed. The updater rejected the wrong checksum, installed the verified package, backed up app files, and preserved profile data.'

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -9,8 +10,10 @@ static class Engine
 {
     public static readonly string Home = Path.GetDirectoryName(typeof(Engine).Assembly.Location);
     public static readonly string Data = Path.Combine(Home, "Data");
-    public static readonly string SecondProfile = Path.Combine(Data, "Profiles", "Second Spotify");
-    public static readonly string SecondCache = Path.Combine(SecondProfile, "Cache");
+    public static readonly string DefaultProfile = Path.Combine(Data, "Profiles", "Second Spotify");
+    static string secondProfile = ReadProfile();
+    public static string SecondProfile { get { return secondProfile; } }
+    public static string SecondCache { get { return Path.Combine(SecondProfile, "Cache"); } }
     static readonly string DefaultSpotify = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"Spotify\Spotify.exe");
     static readonly string SpotifyPathFile = Path.Combine(Data, "SpotifyPath.txt");
@@ -18,6 +21,27 @@ static class Engine
     public static string Spotify { get { return spotify; } }
     public const string SecondTag = "--mu=WrakeebDualSpotifyProbeA";
     static readonly int Session = Process.GetCurrentProcess().SessionId;
+
+    static string ReadProfile()
+    {
+        var file = Path.Combine(Data, "SecondProfilePath.txt");
+        if (!File.Exists(file))
+            return DefaultProfile;
+        var value = File.ReadAllText(file).Trim();
+        if (!Path.IsPathRooted(value))
+            throw new IOException("The saved Second Spotify storage location is invalid.");
+        return Path.GetFullPath(value);
+    }
+
+    public static void MoveProfile(string path)
+    {
+        var target = ProfileStorage.CopyVerified(SecondProfile, path, new[] {
+            Home, Path.GetDirectoryName(Spotify),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Spotify")
+        });
+        WriteDataText("SecondProfilePath.txt", target);
+        secondProfile = target;
+    }
 
     static string ReadSpotifyPath()
     {
@@ -33,14 +57,20 @@ static class Engine
         if (!File.Exists(selected) || !String.Equals(Path.GetFileName(selected), "Spotify.exe", StringComparison.OrdinalIgnoreCase) ||
             FileVersionInfo.GetVersionInfo(selected).ProductName != "Spotify")
             throw new IOException("Choose the Spotify.exe from a standalone Spotify installation.");
-        Directory.CreateDirectory(Data);
-        var staging = SpotifyPathFile + ".tmp";
-        File.WriteAllText(staging, selected);
-        if (File.Exists(SpotifyPathFile))
-            File.Replace(staging, SpotifyPathFile, null);
-        else
-            File.Move(staging, SpotifyPathFile);
+        WriteDataText("SpotifyPath.txt", selected);
         spotify = selected;
+    }
+
+    public static void WriteDataText(string file, string value)
+    {
+        Directory.CreateDirectory(Data);
+        var target = Path.Combine(Data, file);
+        var staging = target + ".tmp";
+        File.WriteAllText(staging, value);
+        if (File.Exists(target))
+            File.Replace(staging, target, null);
+        else
+            File.Move(staging, target);
     }
 
     public static string SecondArguments(string profile)
@@ -63,9 +93,16 @@ static class Engine
 
     public static int[][] Snapshot()
     {
-        var instances = new[] { new System.Collections.Generic.List<int>(), new System.Collections.Generic.List<int>() };
+        int[][] children;
+        return Scan(out children);
+    }
+
+    public static int[][] Scan(out int[][] children)
+    {
+        var instances = new[] { new List<int>(), new List<int>() };
+        var helpers = new List<KeyValuePair<int, int>>();
         using (var search = new ManagementObjectSearcher(
-            "SELECT ProcessId, ExecutablePath, CommandLine FROM Win32_Process WHERE Name='Spotify.exe' AND SessionId=" + Session))
+            "SELECT ProcessId, ParentProcessId, ExecutablePath, CommandLine FROM Win32_Process WHERE Name='Spotify.exe' AND SessionId=" + Session))
         using (var results = search.Get())
         {
             foreach (ManagementObject current in results)
@@ -75,11 +112,26 @@ static class Engine
                 if (String.IsNullOrEmpty(command) ||
                     !String.Equals(current["ExecutablePath"] as string, Spotify, StringComparison.OrdinalIgnoreCase))
                     continue;
-                var kind = Classify(Split(command), SecondCache);
+                var args = Split(command);
+                var pid = Convert.ToInt32(current["ProcessId"]);
+                var kind = Classify(args, SecondCache);
                 if (kind >= 0)
-                    instances[kind].Add(Convert.ToInt32(current["ProcessId"]));
+                    instances[kind].Add(pid);
+                else if (args.Skip(1).Any(v => v.StartsWith("--type=", StringComparison.OrdinalIgnoreCase)))
+                    helpers.Add(new KeyValuePair<int, int>(Convert.ToInt32(current["ParentProcessId"]), pid));
             }
         }
+        var byParent = helpers.ToLookup(p => p.Key, p => p.Value);
+        children = instances.Select(roots =>
+        {
+            var found = new HashSet<int>(roots);
+            var queue = new Queue<int>(roots);
+            while (queue.Count > 0)
+                foreach (var child in byParent[queue.Dequeue()])
+                    if (found.Add(child))
+                        queue.Enqueue(child);
+            return found.Except(roots).ToArray();
+        }).ToArray();
         return instances.Select(x => x.ToArray()).ToArray();
     }
 
@@ -99,11 +151,13 @@ static class Engine
         finally { LocalFree(pointer); }
     }
 
-    public static void Open(bool second)
+    public static void Open(bool second, bool minimized = false)
     {
         var instances = Snapshot()[second ? 1 : 0];
         if (instances.Length > 0)
         {
+            if (minimized)
+                return;
             foreach (int id in instances)
                 using (var process = TryProcess(id))
                     if (process != null && process.MainWindowHandle != IntPtr.Zero)
@@ -118,7 +172,10 @@ static class Engine
         }
         if (!File.Exists(Spotify))
             throw new FileNotFoundException("Install the Windows desktop edition from spotify.com/download/windows, then try again.");
-        var start = new ProcessStartInfo(Spotify, second ? SecondArguments(SecondCache) : "")
+        var arguments = second ? SecondArguments(SecondCache) : "";
+        if (minimized)
+            arguments += " --minimized";
+        var start = new ProcessStartInfo(Spotify, arguments)
         {
             UseShellExecute = false,
             WorkingDirectory = Path.GetDirectoryName(Spotify)

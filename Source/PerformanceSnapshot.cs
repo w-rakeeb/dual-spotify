@@ -8,7 +8,7 @@ public sealed class PerformanceSnapshot
     public int Count, Root;
     public bool Ready;
 
-    public static PerformanceSnapshot Capture(Process[] processes)
+    public static PerformanceSnapshot Capture(Process[] processes, Process[] helpers)
     {
         var snapshot = new PerformanceSnapshot();
         foreach (var process in processes)
@@ -25,6 +25,17 @@ public sealed class PerformanceSnapshot
                     snapshot.Started = started;
                     snapshot.Ready = process.MainWindowHandle != IntPtr.Zero;
                 }
+            }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { }
+        }
+        foreach (var process in helpers)
+        {
+            try
+            {
+                snapshot.Memory += process.WorkingSet64;
+                snapshot.Cpu += process.TotalProcessorTime.TotalMilliseconds;
+                snapshot.Count++;
             }
             catch (InvalidOperationException) { }
             catch (System.ComponentModel.Win32Exception) { }
