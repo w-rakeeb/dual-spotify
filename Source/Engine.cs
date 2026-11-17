@@ -170,11 +170,7 @@ static class Engine
     {
         if (second)
         {
-            var active = Snapshot()[1];
-            var independent = ManagedSecond.Player();
-            if (active.Any(id => id != independent))
-                throw new IOException("Quit the old Second Spotify window before starting the independent profile.");
-            ManagedSecond.Open(minimized);
+            OpenSecond(minimized, null);
             return;
         }
         var instances = Snapshot()[0];
@@ -209,6 +205,15 @@ static class Engine
         }
         using (Process.Start(new ProcessStartInfo(Spotify) { UseShellExecute = false,
             WorkingDirectory = Path.GetDirectoryName(Spotify) })) { }
+    }
+
+    public static void OpenSecond(bool minimized, Action<string> progress)
+    {
+        var active = Snapshot()[1];
+        var independent = ManagedSecond.Player();
+        if (active.Any(id => id != independent))
+            throw new IOException("Quit the old Second Spotify window before starting the independent profile.");
+        ManagedSecond.OpenWithProgress(minimized, progress);
     }
 
     public static void FocusWindow(IntPtr handle)

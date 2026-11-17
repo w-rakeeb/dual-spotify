@@ -8,8 +8,8 @@ Dual Spotify opens two accounts in the official Windows Spotify desktop client. 
 
 1. For Main Spotify, install Spotify from the Microsoft Store or [Spotify's website](https://www.spotify.com/download/windows/).
 2. Extract the complete **Dual-Spotify-Windows.zip** into a writable folder and open **Dual Spotify.exe**.
-3. Under **Second Spotify**, click **Set up**, then **Add Windows profile**. Pick a saved profile, use a detected Dual Steam profile, or create a new Windows profile. Creating a Windows profile requires administrator approval.
-4. Open **Second Spotify** and sign in inside its window. The launcher extracts the signed Spotify desktop client into the selected Windows profile if needed. Main Spotify can stay open during setup.
+3. Under **Second Spotify**, click **Set up**, then **Add Windows profile**. Pick a saved profile, use a detected Dual Steam profile, or create a new Windows profile. If Dual Steam was extracted elsewhere, use **Locate Dual Steam** and choose its executable. Finish Second Steam setup in Dual Steam before sharing that profile. Creating a Windows profile requires administrator approval.
+4. Open **Second Spotify** and sign in inside its window. If the selected Windows profile has no desktop client, the launcher downloads and extracts the signed Spotify installer. The first download may take a few minutes. Main Spotify can stay open during setup.
 5. Search for **Dual Spotify** or **Second Spotify** in Start. **Settings → General → Repair shortcuts** also creates the desktop shortcuts.
 
 **Quit** on the second card requests a graceful close of the identified second window. If Spotify keeps the client in its notification area, use that client's own Quit Spotify menu. In **Settings → General**, choose what starts with Windows, whether closing hides the dashboard, and whether Second Spotify keeps running when the manager exits. The launcher leaves Main Spotify open.

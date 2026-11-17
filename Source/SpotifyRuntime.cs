@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading;
 
 static class SpotifyRuntime
 {
@@ -32,21 +33,30 @@ static class SpotifyRuntime
             VerifyPublisher(Path.Combine(staging, "Spotify.exe"));
             if (!File.Exists(Path.Combine(staging, "libcef.dll")) || !Directory.Exists(Path.Combine(staging, "Apps")))
                 throw new IOException("The extracted Spotify desktop client is incomplete.");
-            Directory.Move(staging, client);
+            // A failed earlier extraction can leave a partial Client folder. Keep it for recovery.
+            var previous = Directory.Exists(client) ? client + ".previous-" + Guid.NewGuid().ToString("N") : null;
+            if (previous != null) Directory.Move(client, previous);
+            try { Directory.Move(staging, client); }
+            catch
+            {
+                if (previous != null && !Directory.Exists(client)) Directory.Move(previous, client);
+                throw;
+            }
         }
         finally
         {
             if (Directory.Exists(staging)) Directory.Delete(staging, true);
         }
     }
-    public static void Fetch(string destination)
+    public static void Fetch(string destination, Action<string> progress)
     {
         var staging = destination + ".download";
         if (File.Exists(staging))
             File.Delete(staging);
         try
         {
-            Download(staging);
+            Download(staging, progress);
+            if (progress != null) progress("Verifying Spotify…");
             VerifyPublisher(staging);
             File.Move(staging, destination);
         }
@@ -56,29 +66,46 @@ static class SpotifyRuntime
         }
     }
 
-    static void Download(string destination)
+    static void Download(string destination, Action<string> progress)
     {
         ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
         var request = (HttpWebRequest)WebRequest.Create(DownloadUrl);
         request.AllowAutoRedirect = false;
         request.Timeout = request.ReadWriteTimeout = 30000;
         request.UserAgent = "DualSpotify";
-        using (var response = (HttpWebResponse)request.GetResponse())
-        using (var input = response.GetResponseStream())
-        using (var output = new FileStream(destination, FileMode.CreateNew))
+        using (var deadline = new Timer(_ => request.Abort(), null, TimeSpan.FromMinutes(4), Timeout.InfiniteTimeSpan))
+        try
         {
-            if (response.StatusCode != HttpStatusCode.OK || response.ContentLength > MaximumDownload)
-                throw new IOException("Spotify’s download server returned an unexpected response.");
-            var buffer = new byte[128 * 1024];
-            int read;
-            while ((read = input.Read(buffer, 0, buffer.Length)) != 0)
+            using (var response = (HttpWebResponse)request.GetResponse())
+            using (var input = response.GetResponseStream())
+            using (var output = new FileStream(destination, FileMode.CreateNew))
             {
-                if (output.Length + read > MaximumDownload)
-                    throw new IOException("Spotify’s installer exceeded the download size limit.");
-                output.Write(buffer, 0, read);
+                if (response.StatusCode != HttpStatusCode.OK || response.ContentLength > MaximumDownload)
+                    throw new IOException("Spotify’s download server returned an unexpected response.");
+                var buffer = new byte[128 * 1024];
+                var timer = Stopwatch.StartNew();
+                int read;
+                while ((read = input.Read(buffer, 0, buffer.Length)) != 0)
+                {
+                    if (output.Length + read > MaximumDownload)
+                        throw new IOException("Spotify’s installer exceeded the download size limit.");
+                    output.Write(buffer, 0, read);
+                    if (progress != null && response.ContentLength > 0 && timer.ElapsedMilliseconds >= 300)
+                    {
+                        progress("Downloading… " + Math.Min(100, output.Length * 100 / response.ContentLength) + "%");
+                        timer.Restart();
+                    }
+                }
+                if (response.ContentLength >= 0 && response.ContentLength != output.Length)
+                    throw new IOException("Spotify’s installer download was incomplete. Try opening Second Spotify again.");
             }
-            if (response.ContentLength >= 0 && response.ContentLength != output.Length)
-                throw new IOException("Spotify’s installer download was incomplete.");
+        }
+        catch (WebException ex)
+        {
+            if (ex.Response != null) ex.Response.Dispose();
+            throw new IOException(ex.Status == WebExceptionStatus.Timeout || ex.Status == WebExceptionStatus.RequestCanceled
+                ? "The Spotify download timed out. Check your connection and try opening Second Spotify again."
+                : "Could not download Spotify from its official server. Check your connection and try again.", ex);
         }
     }
 

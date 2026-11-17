@@ -7,7 +7,6 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
 using DualSpotify.UI;
-using Forms = System.Windows.Forms;
 
 public partial class App
 {
@@ -82,9 +81,10 @@ public partial class App
         }
         if (savedProfiles.Length > 0)
             body.Children.Add(Ui.Divider());
-        var steam = SteamWindowsProfile.Detect();
-        if (steam != null && !catalog.Any(a => a.SteamHome != null && a.SteamHome.Equals(steam, StringComparison.OrdinalIgnoreCase)))
-            body.Children.Add(ActionButton("Use detected Dual Steam profile", () => choose(() => SelectSteamProfile(steam))));
+        string steam = null;
+        var detected = ActionButton("Looking for Dual Steam…", () => choose(() => SelectSteamProfile(steam)));
+        detected.IsEnabled = false;
+        body.Children.Add(detected);
         body.Children.Add(ActionButton("Locate Dual Steam…", () => choose(BrowseSteamProfile)));
         body.Children.Add(ActionButton("Create Windows profile", () => choose(() =>
             ChangeWindowsProfile(ManagedSecond.CreateProfile, "Windows profile created."))));
@@ -97,6 +97,21 @@ public partial class App
             item.HorizontalAlignment = HorizontalAlignment.Stretch;
         }
         cancel.HorizontalAlignment = HorizontalAlignment.Right;
+        dialog.Loaded += async (s, e) =>
+        {
+            try { steam = await Task.Run(() => SteamWindowsProfile.Detect()); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            if (!dialog.IsVisible) return;
+            if (steam == null || catalog.Any(a => String.Equals(a.SteamHome, steam, StringComparison.OrdinalIgnoreCase)))
+                body.Children.Remove(detected);
+            else
+            {
+                detected.Content = "Use detected Dual Steam profile";
+                Ui.Name(detected, "Use detected Dual Steam profile");
+                detected.IsEnabled = true;
+            }
+        };
         dialog.ShowDialog();
     }
 
@@ -131,10 +146,13 @@ public partial class App
 
     void BrowseSteamProfile()
     {
-        using (var picker = new Forms.FolderBrowserDialog { Description = "Choose the Dual Steam launcher folder",
-            ShowNewFolderButton = false })
-            if (picker.ShowDialog() == Forms.DialogResult.OK)
-                SelectSteamProfile(picker.SelectedPath);
+        var picker = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Locate Dual Steam.exe", Filter = "Dual Steam (Dual Steam.exe)|Dual Steam.exe",
+            CheckFileExists = true
+        };
+        if (picker.ShowDialog(window) == true)
+            SelectSteamProfile(Path.GetDirectoryName(picker.FileName));
     }
 
     void SelectSteamProfile(string home)

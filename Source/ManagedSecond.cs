@@ -24,6 +24,7 @@ static class ManagedSecond
     const string SharedRecord = "SharedWindowsAccount.json";
     const string CatalogRecord = "WindowsProfiles.json";
     const string Installer = "SpotifyFullSetupX64.exe";
+    const int InstallerRequired = 42;
     static readonly string SharedRoot = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
     public static bool Configured { get { return SelectedAccount() != null; } }
     public static bool IsShared { get { var account = SelectedAccount(); return account != null && account.SteamHome != null; } }
@@ -288,23 +289,31 @@ static class ManagedSecond
             throw new IOException(operation + ": " + new Win32Exception(error).Message);
     }
 
-    public static void Open(bool minimized)
+    public static void Open(bool minimized) { OpenWithProgress(minimized, null); }
+
+    public static void OpenWithProgress(bool minimized, Action<string> progress)
     {
         var account = ReadAccount();
-        Request(account, minimized ? "minimized" : "open");
+        var action = minimized ? "minimized" : "open";
+        if (progress != null) progress("Opening Spotify…");
+        if (Request(account, action) != InstallerRequired)
+            return;
+        var setup = Path.Combine(PlayerRoot(account), Installer);
+        if (progress != null) progress("Downloading Spotify…");
+        SpotifyRuntime.Fetch(setup, progress);
+        if (progress != null) progress("Installing Spotify…");
+        if (Request(account, action) == InstallerRequired)
+            throw new IOException("The downloaded Spotify setup could not be opened by the selected Windows account.");
     }
 
     public static void Quit() { if (Configured) Request(ReadAccount(), "quit"); }
 
-    static void Request(Account account, string action)
+    static int Request(Account account, string action)
     {
         var root = PlayerRoot(account);
         var copy = Path.Combine(root, "Dual Spotify Profile " + typeof(ManagedSecond).Assembly.GetName().Version.ToString(3) + ".exe");
         if (!File.Exists(copy))
             File.Copy(Path.Combine(Engine.Home, "Dual Spotify.exe"), copy);
-        var setup = Path.Combine(root, Installer);
-        if ((action == "open" || action == "minimized") && !File.Exists(setup))
-            SpotifyRuntime.Fetch(setup);
         DesktopAccess.Grant(account.Sid);
         var id = Guid.NewGuid().ToString("N");
         var readyPath = Path.Combine(root, "State", id + ".ready");
@@ -323,12 +332,15 @@ static class ManagedSecond
                     while (!child.WaitForExit(125))
                     {
                         if (File.Exists(readyPath))
-                            return;
-                        if (timeout.ElapsedMilliseconds >= 125000)
-                            throw new IOException("The independent Spotify process is still preparing. Try again shortly.");
+                            return 0;
+                        if (timeout.ElapsedMilliseconds >= 155000)
+                            throw new IOException("The selected Windows profile did not finish opening Spotify. Try opening it again.");
                     }
+                    if (child.ExitCode == InstallerRequired && (action == "open" || action == "minimized"))
+                        return InstallerRequired;
                     if (child.ExitCode != 0)
                         throw new IOException(File.Exists(result) ? File.ReadAllText(result) : "The independent Spotify player could not be started.");
+                    return 0;
                 }
                 finally
                 {
@@ -394,7 +406,12 @@ static class ManagedSecond
             }
             var player = File.Exists(installed) ? installed : extracted;
             if (!File.Exists(player))
-                SpotifyRuntime.Extract(Path.Combine(root, Installer), client);
+            {
+                var setup = Path.Combine(root, Installer);
+                if (!File.Exists(setup))
+                    return InstallerRequired;
+                SpotifyRuntime.Extract(setup, client);
+            }
             var arguments = profileArguments +
                 (action == "minimized" ? " --minimized" : "");
             using (var child = Process.Start(new ProcessStartInfo(player, arguments)
@@ -407,7 +424,7 @@ static class ManagedSecond
                     return 0;
                 }
                 var startup = Stopwatch.StartNew();
-                while (startup.ElapsedMilliseconds < 25000)
+                while (startup.ElapsedMilliseconds < 50000)
                 {
                     using (var ready = FindPlayer(state, installed, extracted))
                         if (ready != null)
@@ -419,7 +436,7 @@ static class ManagedSecond
                     Thread.Sleep(250);
                 }
             }
-            throw new IOException("Spotify did not open a window in the dedicated Windows account.");
+            throw new IOException("Spotify did not open a window in the selected Windows profile. Close any Spotify window from that profile and try again.");
         }
         catch (Exception ex)
         {

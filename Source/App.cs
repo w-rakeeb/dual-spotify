@@ -16,7 +16,7 @@ using DualSpotify.UI;
 using DualSpotifyNative;
 
 [assembly: AssemblyTitle("Dual Spotify")]
-[assembly: AssemblyVersion("0.4.2.0")]
+[assembly: AssemblyVersion("0.4.3.0")]
 
 public partial class App : Application
 {
@@ -228,11 +228,18 @@ public partial class App : Application
         var card = second ? secondCard : mainCard;
         if (card != null)
             card.Loading(opening);
+        var progress = new Progress<string>(stage =>
+        {
+            if (busy && card != null && card.Busy)
+                card.Open.Content = stage;
+        });
         try
         {
             await Task.Run(() =>
             {
-                if (opening)
+                if (opening && second)
+                    Engine.OpenSecond(minimized, ((IProgress<string>)progress).Report);
+                else if (opening)
                     Engine.Open(second, minimized);
                 else
                     Engine.Quit(second);
