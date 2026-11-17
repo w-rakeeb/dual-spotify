@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -19,12 +20,13 @@ static class Engine
     static readonly int Session = Process.GetCurrentProcess().SessionId;
     static string spotify = ReadSpotifyPath();
     static bool storeAvailable = SpotifyInstallation.StoreInstalled();
-    static bool storeSecondFailed;
+    static string storeFolder = SpotifyInstallation.FindPackageFolder(SpotifyInstallation.StoreFamily);
     public static bool StoreAvailable { get { return storeAvailable; } }
+    public static string StoreFolder { get { return storeFolder; } }
+    static string StoreExecutable { get { return StoreFolder == null ? null : Path.Combine(StoreFolder, "Spotify.exe"); } }
     public static string Spotify { get { return spotify; } }
     public static bool DesktopAvailable { get { return File.Exists(Spotify); } }
-    public static bool StoreSecondAvailable { get { return StoreAvailable && !storeSecondFailed && SpotifyInstallation.StoreAlias() != null; } }
-    public static bool CanOpen(bool second) { return DesktopAvailable || (second ? StoreSecondAvailable : StoreAvailable); }
+    public static bool CanOpen { get { return DesktopAvailable || StoreAvailable; } }
     public const string SecondTag = "--mu=WrakeebDualSpotifyProbeA";
 
     static string ReadProfile()
@@ -59,7 +61,7 @@ static class Engine
     {
         spotify = ReadSpotifyPath();
         storeAvailable = SpotifyInstallation.StoreInstalled();
-        storeSecondFailed = false;
+        storeFolder = SpotifyInstallation.FindPackageFolder(SpotifyInstallation.StoreFamily);
     }
 
     public static void SelectSpotify(string path)
@@ -122,7 +124,9 @@ static class Engine
                 var pid = Convert.ToInt32(current["ProcessId"]);
                 var path = current["ExecutablePath"] as string;
                 var desktop = String.Equals(path, Spotify, StringComparison.OrdinalIgnoreCase);
-                if (!desktop && (!StoreAvailable || !SpotifyInstallation.IsStoreProcess(pid)))
+                var packagePath = StoreExecutable;
+                if (!desktop && (!StoreAvailable || !(packagePath != null && String.Equals(path, packagePath, StringComparison.OrdinalIgnoreCase)) &&
+                    !SpotifyInstallation.IsStoreProcess(pid)))
                     continue;
                 if (String.IsNullOrEmpty(command))
                 {
@@ -197,24 +201,29 @@ static class Engine
         if (!DesktopAvailable)
         {
             DetectInstallations();
-            if (!second && !DesktopAvailable && StoreAvailable)
+            if (!DesktopAvailable && StoreAvailable)
             {
-                SpotifyInstallation.OpenStore();
+                if (second)
+                    OpenStoreSecond(minimized);
+                else
+                    SpotifyInstallation.OpenStore();
                 return;
             }
-            if (!DesktopAvailable && (!second || !StoreSecondAvailable))
-                throw new FileNotFoundException(StoreAvailable
-                    ? "Second Spotify needs the Store execution alias enabled or a standalone Spotify.exe."
-                    : "Use Locate Spotify to choose an installed Spotify.exe.");
+            if (!DesktopAvailable)
+                throw new FileNotFoundException("Use Locate Spotify to choose an installed Spotify.exe.");
         }
-        var storeAlias = second && !DesktopAvailable ? SpotifyInstallation.StoreAlias() : null;
         var arguments = second ? SecondArguments(SecondCache) : "";
         if (minimized)
             arguments += " --minimized";
-        var start = new ProcessStartInfo(storeAlias ?? Spotify, arguments)
+        StartPlayer(Spotify, arguments, second, Path.GetDirectoryName(Spotify));
+    }
+
+    static void StartPlayer(string executable, string arguments, bool second, string workingDirectory)
+    {
+        var start = new ProcessStartInfo(executable, arguments)
         {
             UseShellExecute = false,
-            WorkingDirectory = storeAlias == null ? Path.GetDirectoryName(Spotify) : SecondProfile
+            WorkingDirectory = workingDirectory
         };
         if (second)
         {
@@ -222,18 +231,30 @@ static class Engine
             start.EnvironmentVariables["APPDATA"] = Directory.CreateDirectory(Path.Combine(SecondProfile, "Roaming")).FullName;
             start.EnvironmentVariables["LOCALAPPDATA"] = Directory.CreateDirectory(Path.Combine(SecondProfile, "Local")).FullName;
         }
-        try
+        using (Process.Start(start)) { }
+    }
+
+    static void OpenStoreSecond(bool minimized)
+    {
+        var arguments = SecondArguments(SecondCache) + (minimized ? " --minimized" : "");
+        Directory.CreateDirectory(SecondCache);
+        var launched = false;
+        foreach (var path in new[] { StoreExecutable, SpotifyInstallation.StoreAlias() })
         {
-            using (Process.Start(start)) { }
-            if (storeAlias != null)
-                VerifyStoreSecond();
+            if (path == null)
+                continue;
+            try
+            {
+                StartPlayer(path, arguments, true, SecondProfile);
+                launched = true;
+                break;
+            }
+            catch (Win32Exception) { }
+            catch (UnauthorizedAccessException) { }
         }
-        catch
-        {
-            if (storeAlias != null)
-                storeSecondFailed = true;
-            throw;
-        }
+        if (!launched)
+            SpotifyInstallation.OpenStore(arguments);
+        VerifyStoreSecond();
     }
 
     static void VerifyStoreSecond()
@@ -250,7 +271,7 @@ static class Engine
         // Only the root with our exact tag and cache path can be closed here.
         try { Quit(true); }
         catch (InvalidOperationException) { }
-        throw new IOException("The Store client did not start with a verified separate profile. Enable its execution alias or use Locate Spotify to select the standalone client.");
+        throw new IOException("This Store build did not open a separate Spotify window. Use the standalone client for Second Spotify.");
     }
 
     static bool StoreRendererUsesCache(int[] helpers)

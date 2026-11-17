@@ -34,6 +34,17 @@ $expectedStore = [bool](Get-AppxPackage -Name SpotifyAB.SpotifyMusic)
 if ($engine.GetProperty('StoreAvailable').GetValue($null) -ne $expectedStore) {
     throw 'Microsoft Store detection disagrees with the registered packages.'
 }
+$packageFolder = $install.GetMethod('FindPackageFolder')
+$registered = Get-AppxPackage -Name SpotifyAB.SpotifyMusic | Select-Object -First 1
+if (!$registered) { $registered = Get-AppxPackage -Name Microsoft.WindowsTerminal | Select-Object -First 1 }
+if ($registered -and $registered.InstallLocation) {
+    $family = [string]$registered.PackageFamilyName
+    $actual = $packageFolder.Invoke($null, [object[]]@($family))
+    if ($actual -ne $registered.InstallLocation) { throw 'Native package lookup returned a different install location.' }
+    'Native Store package lookup matched Windows package registration.'
+}
+$absent = $packageFolder.Invoke($null, [object[]]@('DualSpotify.MissingPackage_zpdnekdrzrea0'))
+if ($absent) { throw 'Native package lookup returned a path for an unregistered package.' }
 $cache = [IO.Path]::Combine($work, 'Isolated Cache')
 $renderer = 'Spotify.exe --type=renderer --user-data-dir="' + $cache + '"'
 $other = 'Spotify.exe --type=renderer --user-data-dir="' + $cache + '-main"'

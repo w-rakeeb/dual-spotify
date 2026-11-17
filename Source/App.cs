@@ -16,7 +16,7 @@ using DualSpotify.UI;
 using DualSpotifyNative;
 
 [assembly: AssemblyTitle("Dual Spotify")]
-[assembly: AssemblyVersion("0.2.2.0")]
+[assembly: AssemblyVersion("0.2.3.0")]
 
 public partial class App : Application
 {
@@ -245,7 +245,7 @@ public partial class App : Application
             var helpers = lastChildren[i].Select(Engine.TryProcess).Where(p => p != null).ToArray();
             try
             {
-                card.Update(processes, i == 0 || Directory.Exists(Engine.SecondProfile));
+                card.Update(processes, i == 0 || Engine.StoreAvailable || Directory.Exists(Engine.SecondProfile));
                 details.Update(PerformanceSnapshot.Capture(processes, helpers));
             }
             finally { foreach (var process in processes.Concat(helpers)) process.Dispose(); }
@@ -254,14 +254,14 @@ public partial class App : Application
         for (int i = 0; i < 2; i++)
         {
             var card = i == 0 ? mainCard : secondCard;
-            if (!card.Busy && !card.Running && !Engine.CanOpen(i == 1))
+            if (!card.Busy && !card.Running && !Engine.CanOpen)
             {
-                card.Pill.Set(Engine.StoreAvailable ? "Setup needed" : "Missing", "warning", card.NameLabel);
+                card.Pill.Set("Missing", "warning", card.NameLabel);
                 card.Open.Content = "Locate Spotify";
                 Ui.Name(card.Open, "Locate Spotify for " + card.NameLabel);
             }
         }
-        installationHelp.Visibility = Engine.CanOpen(true) ? Visibility.Collapsed : Visibility.Visible;
+        installationHelp.Visibility = Engine.CanOpen ? Visibility.Collapsed : Visibility.Visible;
     }
 
     void ShowPage(string page)
@@ -288,8 +288,7 @@ public partial class App : Application
         body.Children.Add(mainCard);
         body.Children.Add(secondCard);
         installationHelp = SettingsCard("Spotify installation",
-            Text(Engine.StoreAvailable ? "Microsoft Store Spotify was found. To open a second profile, enable its Spotify execution alias in Windows Settings or locate a standalone Spotify.exe." :
-                "If Spotify is already installed in another folder, choose its Spotify.exe."),
+            Text("If Spotify is already installed in another folder, choose its Spotify.exe."),
             ToolActions(ActionButton("Detect Spotify", DetectSpotify), ActionButton("Get Spotify for Windows", OpenSpotifyDownload)));
         body.Children.Add(installationHelp);
         var columns = new Grid { Margin = new Thickness(0, 12, 0, 0) };
@@ -316,7 +315,7 @@ public partial class App : Application
 
     void OpenOrLocate(bool second)
     {
-        if (Engine.CanOpen(second) || last[second ? 1 : 0].Length > 0)
+        if (Engine.CanOpen || last[second ? 1 : 0].Length > 0)
             RunProfile(second, true);
         else
             Safe(LocateSpotify);
@@ -352,7 +351,10 @@ public partial class App : Application
         columns.ColumnDefinitions.Add(new ColumnDefinition());
         var profiles = Stack();
         profiles.Margin = new Thickness(0, 0, 6, 0);
-        profiles.Children.Add(PathCard("Standalone Spotify executable", Engine.Spotify, Path.GetDirectoryName(Engine.Spotify)));
+        if (Engine.StoreFolder != null)
+            profiles.Children.Add(PathCard("Microsoft Store installation", Engine.StoreFolder, Engine.StoreFolder));
+        if (Engine.DesktopAvailable || !Engine.StoreAvailable)
+            profiles.Children.Add(PathCard("Standalone Spotify executable", Engine.Spotify, Path.GetDirectoryName(Engine.Spotify)));
         profiles.Children.Add(PathCard("Second Spotify profile", Engine.SecondProfile, Engine.SecondProfile));
         var manager = Stack();
         manager.Margin = new Thickness(6, 0, 0, 0);
@@ -413,8 +415,7 @@ public partial class App : Application
         Engine.DetectInstallations();
         ShowPage(currentPage);
         toast.Show(Engine.DesktopAvailable ? "Standalone Spotify found." :
-            Engine.StoreSecondAvailable ? "Microsoft Store Spotify and its execution alias found." :
-            Engine.StoreAvailable ? "Microsoft Store Spotify found. Enable the Spotify execution alias for the second profile." :
+            Engine.StoreAvailable ? "Microsoft Store Spotify found." :
             "Spotify was not detected. Use Locate Spotify to browse for Spotify.exe.");
         RefreshNow();
     }

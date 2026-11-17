@@ -93,6 +93,39 @@ static class SpotifyInstallation
         return (result == 0 || result == 122) && count > 0;
     }
 
+    public static string FindPackageFolder(string family)
+    {
+        uint count = 0, length = 0;
+        if (GetPackagesByPackageFamily(family, ref count, IntPtr.Zero, ref length, IntPtr.Zero) != 122 ||
+            count == 0 || length == 0)
+            return null;
+
+        IntPtr names = IntPtr.Zero, buffer = IntPtr.Zero;
+        try
+        {
+            names = Marshal.AllocHGlobal(checked((int)count * IntPtr.Size));
+            buffer = Marshal.AllocHGlobal(checked((int)length * sizeof(char)));
+            if (GetPackagesByPackageFamily(family, ref count, names, ref length, buffer) != 0)
+                return null;
+            for (int index = 0; index < count; index++)
+            {
+                var fullName = Marshal.PtrToStringUni(Marshal.ReadIntPtr(names, index * IntPtr.Size));
+                uint pathLength = 0;
+                if (GetPackagePathByFullName(fullName, ref pathLength, null) != 122 || pathLength == 0)
+                    continue;
+                var path = new StringBuilder(checked((int)pathLength));
+                if (GetPackagePathByFullName(fullName, ref pathLength, path) == 0)
+                    return path.ToString();
+            }
+            return null;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+            Marshal.FreeHGlobal(names);
+        }
+    }
+
     public static string StoreAlias()
     {
         var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -117,13 +150,15 @@ static class SpotifyInstallation
         finally { CloseHandle(handle); }
     }
 
-    public static void OpenStore()
+    public static void OpenStore() { OpenStore(null); }
+
+    public static void OpenStore(string arguments)
     {
         var manager = (IApplicationActivationManager)new ApplicationActivationManager();
         try
         {
             uint pid;
-            Marshal.ThrowExceptionForHR(manager.ActivateApplication(StoreApp, null, 0, out pid));
+            Marshal.ThrowExceptionForHR(manager.ActivateApplication(StoreApp, arguments, 0, out pid));
         }
         finally { Marshal.FinalReleaseComObject(manager); }
     }
@@ -140,6 +175,8 @@ static class SpotifyInstallation
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     static extern int GetPackagesByPackageFamily(string family, ref uint count, IntPtr names, ref uint length, IntPtr buffer);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    static extern int GetPackagePathByFullName(string fullName, ref uint pathLength, StringBuilder path);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     static extern int GetPackageFamilyName(IntPtr process, ref uint length, StringBuilder family);
     [DllImport("kernel32.dll")]

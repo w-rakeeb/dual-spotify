@@ -101,7 +101,7 @@ public partial class App
         body.Children.Add(SettingsCard("Spotify desktop client",
             Text(Engine.DesktopAvailable ? "Standalone installation detected." : "Standalone installation missing."),
             Text(Engine.StoreAvailable ? "Microsoft Store installation detected." : "Microsoft Store installation not detected."),
-            Text("Main Spotify supports either edition. Second Spotify uses the standalone edition or the Microsoft Store execution alias with a separate profile."),
+            Text("Use Open on Profiles for either edition. You can find the registered Microsoft Store installation under Files."),
             ToolActions(ActionButton("Verify native setup", VerifySetup), openStore,
                 ActionButton("Get Spotify for Windows", OpenSpotifyDownload))));
         body.Children.Add(SettingsCard("Windows requirements",
@@ -155,7 +155,7 @@ public partial class App
 
     void VerifySetup()
     {
-        if (!Engine.CanOpen(false))
+        if (!Engine.CanOpen)
             throw new IOException("Use Locate Spotify to select an installed Spotify.exe.");
         var state = Engine.Snapshot();
         toast.Show("Spotify detected. Main processes: " + state[0].Length + " · Second processes: " + state[1].Length + ".");
