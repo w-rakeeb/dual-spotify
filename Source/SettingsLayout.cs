@@ -1,7 +1,6 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,13 +13,13 @@ public partial class App
 
     FrameworkElement Settings()
     {
-        var body = Page("Settings", "Startup, profile storage, compatibility and appearance.");
+        var body = Page("Settings", "");
         var tabs = new TabControl { Style = Theme.Style("SettingsTabs") };
         Ui.Name(tabs, "Settings sections");
         foreach (var item in new[] {
             new TabItem { Header = "General", Content = GeneralSettings() },
+            new TabItem { Header = "Windows profiles", Content = WindowsProfileSettings() },
             new TabItem { Header = "Storage", Content = StorageSettings() },
-            new TabItem { Header = "Compatibility", Content = CompatibilitySettings() },
             new TabItem { Header = "Appearance", Content = AppearanceSettings() }
         })
         {
@@ -47,17 +46,17 @@ public partial class App
         var prefs = Preferences.Current;
         var body = Stack();
         body.Children.Add(SettingsCard("Startup",
-            Choice("Start with Windows", "Launch the manager in the notification area when you sign in.",
+            Choice("Start with Windows", "Open the manager in the notification area.",
                 DesktopShortcut.StartsWithWindows, DesktopShortcut.SetStartup),
             Ui.Divider(),
-            Choice("Open Second Spotify at startup", "Start the second player when Dual Spotify starts with Windows.",
+            Choice("Open Second Spotify at startup", "Requires Start with Windows.",
                 prefs.StartSecondWithWindows, v => prefs.StartSecondWithWindows = v),
             Ui.Divider(),
-            Choice("Start Second Spotify minimized", "Apply when the second player opens with Windows.",
+            Choice("Start Second Spotify minimized", "Applies when the player starts with Windows.",
                 prefs.StartSecondMinimized, v => prefs.StartSecondMinimized = v)));
         body.Children.Add(SettingsCard("Window and background",
-            Choice("Close to tray", "Hide the window and keep the manager available in the notification area.",
-                prefs.TrayOnClose, v => prefs.TrayOnClose = v),
+            Choice("Close to tray", "Keep the manager in the notification area.",
+                prefs.CloseToTray, v => prefs.CloseToTray = v),
             Ui.Divider(),
             Choice("Second Spotify tray control", "Show a second notification-area icon while the second player is open.",
                 prefs.SecondTray, v => prefs.SecondTray = v),
@@ -68,44 +67,27 @@ public partial class App
             Choice("Keep Second Spotify running on exit", "Leave the second player open when you exit the manager.",
                 prefs.KeepSecondRunning, v => prefs.KeepSecondRunning = v)));
         body.Children.Add(SettingsCard("Updates",
-            Choice("Automatically check for updates", "Check stable GitHub releases at startup, on reopen and periodically.",
+            Choice("Automatically check for updates", "Check for stable GitHub releases.",
                 prefs.AutoUpdates, v => prefs.AutoUpdates = v),
             ActionButton("Open Updates", () => ShowPage("Updates"))));
         body.Children.Add(SettingsCard("Maintenance", ToolActions(
-            ActionButton("Repair desktop shortcuts", () => { DesktopShortcut.Repair(); toast.Show("Desktop shortcuts updated."); }),
+            ActionButton("Repair shortcuts", () => { DesktopShortcut.Repair(); toast.Show("Start menu and desktop shortcuts updated."); }),
             ActionButton("Reset app preferences", ResetPreferences),
             ActionButton("Save diagnostics", SaveDiagnostics))));
-        body.Children.Add(SettingsCard("Exit application",
-            Text("The Keep Second Spotify running setting controls whether the second player closes."),
-            ActionButton("Exit Dual Spotify", ExitManager)));
         return body;
     }
 
     FrameworkElement StorageSettings()
     {
         var body = Stack();
-        body.Children.Add(SettingsCard("Profile storage", PathText(Engine.SecondProfile),
-            Text("Choose an empty local folder. Dual Spotify verifies the copy and keeps the original folder."),
-            ToolActions(ActionButton("Move Second Spotify files…", MoveSecondProfile),
-                ActionButton("View file locations", () => ShowPage("Files")))));
-        body.Children.Add(SettingsCard("Spotify installation", PathText(Engine.Spotify),
-            ToolActions(ActionButton("Locate Spotify…", LocateSpotify), ActionButton("Detect Spotify", DetectSpotify))));
-        return body;
-    }
-
-    FrameworkElement CompatibilitySettings()
-    {
-        var body = Stack();
-        var openStore = ActionButton("Open Microsoft Store Spotify", SpotifyInstallation.OpenStore);
-        openStore.IsEnabled = Engine.StoreAvailable;
-        body.Children.Add(SettingsCard("Spotify desktop client",
-            Text(Engine.DesktopAvailable ? "Standalone installation detected." : "Standalone installation missing."),
-            Text(Engine.StoreAvailable ? "Microsoft Store installation detected." : "Microsoft Store installation not detected."),
-            Text("Use Open on Profiles for either edition. You can find the registered Microsoft Store installation under Files."),
-            ToolActions(ActionButton("Verify native setup", VerifySetup), openStore,
+        body.Children.Add(SettingsCard("Standalone Spotify",
+            Engine.DesktopAvailable ? PathText(Engine.Spotify) : Text("Spotify.exe was not detected."),
+            ToolActions(ActionButton("Locate Spotify…", LocateSpotify), ActionButton("Detect Spotify", DetectSpotify),
                 ActionButton("Get Spotify for Windows", OpenSpotifyDownload))));
-        body.Children.Add(SettingsCard("Windows requirements",
-            Text("Windows 10 or 11 x64 and .NET Framework 4.8. The launcher runs under your Windows account.")));
+        if (Engine.StoreAvailable)
+            body.Children.Add(SettingsCard("Microsoft Store Spotify",
+                ActionButton("Open Microsoft Store Spotify", SpotifyInstallation.OpenStore)));
+        body.Children.Add(SettingsCard("Launcher files", ActionButton("View file locations", () => ShowPage("Files"))));
         return body;
     }
 
@@ -126,39 +108,6 @@ public partial class App
             "Show the process metrics when you open Profiles.", Preferences.Current.ExpandProcesses,
             value => Preferences.Current.ExpandProcesses = value)));
         return body;
-    }
-
-    async void MoveSecondProfile()
-    {
-        if (busy || updateCancellation != null)
-            return;
-        busy = true;
-        try
-        {
-            if (Engine.Snapshot()[1].Length > 0)
-                throw new IOException("Quit Second Spotify before moving its files.");
-            using (var picker = new Forms.FolderBrowserDialog { Description = "Choose an empty folder for Second Spotify" })
-            {
-                if (picker.ShowDialog() != Forms.DialogResult.OK)
-                    return;
-                var destination = picker.SelectedPath;
-                toast.Show("Copying and verifying the second profile…");
-                await Task.Run(() => Engine.MoveProfile(destination));
-            }
-            if (currentPage == "Settings")
-                ShowPage("Settings");
-            toast.Show("Profile files moved. The original folder was kept.");
-        }
-        catch (Exception ex) { toast.Show(ex.Message); }
-        finally { busy = false; }
-    }
-
-    void VerifySetup()
-    {
-        if (!Engine.CanOpen)
-            throw new IOException("Use Locate Spotify to select an installed Spotify.exe.");
-        var state = Engine.Snapshot();
-        toast.Show("Spotify detected. Main processes: " + state[0].Length + " · Second processes: " + state[1].Length + ".");
     }
 
     void ResetPreferences()

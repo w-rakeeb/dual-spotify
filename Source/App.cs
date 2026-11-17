@@ -16,13 +16,13 @@ using DualSpotify.UI;
 using DualSpotifyNative;
 
 [assembly: AssemblyTitle("Dual Spotify")]
-[assembly: AssemblyVersion("0.2.3.0")]
+[assembly: AssemblyVersion("0.4.2.0")]
 
 public partial class App : Application
 {
     const string BuildVersion = UpdateService.CurrentVersion;
     const string SignalPrefix = @"Local\WrakeebDualSpotify.";
-    bool exiting, busy, refreshing;
+    bool exiting, busy, refreshing, exitAfterAction;
     string currentPage = "Profiles";
     Window window;
     Grid shell;
@@ -44,6 +44,12 @@ public partial class App : Application
     [STAThread]
     public static int Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == "--create-second-user")
+            return ManagedSecond.Provision(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--managed-player")
+            return ManagedSecond.RunPlayer(args[1], args[2]);
+        if (args.Length == 6 && args[0] == "--spotify-account")
+            return WindowsProfileAccount.Apply(args[1], args[2], args[3], args[4], args[5]);
         if (!UpdatePackage.RuntimeFilesPresent(Engine.Home))
         {
             MessageBox.Show("Extract the entire Dual Spotify ZIP into a writable folder and keep its files together.", "Complete app folder required");
@@ -91,12 +97,13 @@ public partial class App : Application
         tray = new ManagerTray(ShowManager, OpenSecond, QuitSecond, ExitManager, OpenMain,
             () => { ShowManager(); ShowPage("Settings"); }, CheckUpdatesFromShortcut,
             () => Safe(() => OpenPath(Engine.Home)));
+        tray.SetManagerVisible(!direct);
         window.Closing += (s, e) =>
         {
             if (exiting)
                 return;
             e.Cancel = true;
-            if (Preferences.Current.TrayOnClose)
+            if (Preferences.Current.CloseToTray)
                 window.Hide();
             else
                 ExitManager();
@@ -109,10 +116,13 @@ public partial class App : Application
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += WindowsPreferencesChanged;
         if (direct)
             OpenSecond();
-        else if (startup && Preferences.Current.StartSecondWithWindows)
+        else if (startup && Preferences.Current.StartSecondWithWindows && ManagedSecond.Configured)
             RunProfile(true, true, Preferences.Current.StartSecondMinimized);
         else if (!startup)
+        {
             ShowManager();
+            Safe(DesktopShortcut.RegisterStartMenu);
+        }
         RefreshNow();
         CheckUpdateSchedule(false);
     }
@@ -131,6 +141,7 @@ public partial class App : Application
     {
         if (exiting || window == null)
             return;
+        tray.SetManagerVisible(true);
         window.Show();
         if (window.WindowState == WindowState.Minimized)
             window.WindowState = WindowState.Normal;
@@ -145,8 +156,14 @@ public partial class App : Application
             updateCancellation.Cancel();
             return;
         }
-        if (busy || exiting)
+        if (exiting)
             return;
+        if (busy)
+        {
+            exitAfterAction = true;
+            window.Hide();
+            return;
+        }
         if (!Preferences.Current.KeepSecondRunning)
         {
             busy = true;
@@ -191,7 +208,16 @@ public partial class App : Application
     }
 
     void OpenMain() { RunProfile(false, true); }
-    void OpenSecond() { RunProfile(true, true); }
+    void OpenSecond()
+    {
+        if (!ManagedSecond.Configured)
+        {
+            ShowManager();
+            ShowWindowsProfiles();
+            return;
+        }
+        RunProfile(true, true);
+    }
     void QuitSecond() { RunProfile(true, false); }
 
     async void RunProfile(bool second, bool opening, bool minimized = false)
@@ -214,7 +240,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            if (!exiting)
+            if (!exiting && !exitAfterAction)
             {
                 ShowManager();
                 toast.Show(ex.Message);
@@ -225,6 +251,12 @@ public partial class App : Application
             busy = false;
             if (card != null)
                 card.EndLoading();
+        }
+        if (exitAfterAction)
+        {
+            exitAfterAction = false;
+            ExitManager();
+            return;
         }
         await Refresh();
     }
@@ -245,7 +277,7 @@ public partial class App : Application
             var helpers = lastChildren[i].Select(Engine.TryProcess).Where(p => p != null).ToArray();
             try
             {
-                card.Update(processes, i == 0 || Engine.StoreAvailable || Directory.Exists(Engine.SecondProfile));
+                card.Update(processes, i == 0 || ManagedSecond.Configured);
                 details.Update(PerformanceSnapshot.Capture(processes, helpers));
             }
             finally { foreach (var process in processes.Concat(helpers)) process.Dispose(); }
@@ -254,7 +286,7 @@ public partial class App : Application
         for (int i = 0; i < 2; i++)
         {
             var card = i == 0 ? mainCard : secondCard;
-            if (!card.Busy && !card.Running && !Engine.CanOpen)
+            if (i == 0 && !card.Busy && !card.Running && !Engine.CanOpen)
             {
                 card.Pill.Set("Missing", "warning", card.NameLabel);
                 card.Open.Content = "Locate Spotify";
@@ -278,6 +310,12 @@ public partial class App : Application
         UpdateProfiles();
     }
 
+    void ShowWindowsProfiles()
+    {
+        settingsSection = "Windows profiles";
+        ShowPage("Settings");
+    }
+
     FrameworkElement Profiles()
     {
         var body = Page("Profiles", "Run two Spotify accounts side by side.");
@@ -287,6 +325,9 @@ public partial class App : Application
         secondCard.Quit.Click += (s, e) => QuitSecond();
         body.Children.Add(mainCard);
         body.Children.Add(secondCard);
+        var profileSettings = ActionButton("Windows profiles", ShowWindowsProfiles);
+        profileSettings.HorizontalAlignment = HorizontalAlignment.Left;
+        body.Children.Add(profileSettings);
         installationHelp = SettingsCard("Spotify installation",
             Text("If Spotify is already installed in another folder, choose its Spotify.exe."),
             ToolActions(ActionButton("Detect Spotify", DetectSpotify), ActionButton("Get Spotify for Windows", OpenSpotifyDownload)));
@@ -315,8 +356,10 @@ public partial class App : Application
 
     void OpenOrLocate(bool second)
     {
-        if (Engine.CanOpen || last[second ? 1 : 0].Length > 0)
-            RunProfile(second, true);
+        if (second)
+            OpenSecond();
+        else if (Engine.CanOpen || last[0].Length > 0)
+            OpenMain();
         else
             Safe(LocateSpotify);
     }
@@ -355,7 +398,8 @@ public partial class App : Application
             profiles.Children.Add(PathCard("Microsoft Store installation", Engine.StoreFolder, Engine.StoreFolder));
         if (Engine.DesktopAvailable || !Engine.StoreAvailable)
             profiles.Children.Add(PathCard("Standalone Spotify executable", Engine.Spotify, Path.GetDirectoryName(Engine.Spotify)));
-        profiles.Children.Add(PathCard("Second Spotify profile", Engine.SecondProfile, Engine.SecondProfile));
+        if (Directory.Exists(Engine.SecondProfile))
+            profiles.Children.Add(PathCard("Previous Second Spotify profile", Engine.SecondProfile, Engine.SecondProfile));
         var manager = Stack();
         manager.Margin = new Thickness(6, 0, 0, 0);
         manager.Children.Add(PathCard("Dual Spotify folder", Engine.Home, Engine.Home));
@@ -443,9 +487,14 @@ public partial class App : Application
         var heading = Text(name, Theme.PageSize, "text.primary", true);
         Ui.Name(heading, "Page title: " + name);
         panel.Children.Add(heading);
-        var description = Text(subtitle, Theme.BodySize, "text.secondary");
-        description.Margin = new Thickness(0, 4, 0, 24);
-        panel.Children.Add(description);
+        if (String.IsNullOrEmpty(subtitle))
+            heading.Margin = new Thickness(0, 0, 0, 16);
+        else
+        {
+            var description = Text(subtitle, Theme.BodySize, "text.secondary");
+            description.Margin = new Thickness(0, 4, 0, 24);
+            panel.Children.Add(description);
+        }
         return panel;
     }
     Button ActionButton(string title, Action action)

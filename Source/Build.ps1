@@ -7,7 +7,7 @@ $sources = Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.cs' | Select-Obje
     "/win32manifest:$project\Assets\app.manifest" "/win32icon:$project\Assets\dual-spotify-green.ico" `
     "/out:$project\Dual Spotify.exe" /reference:System.Core.dll /reference:System.Drawing.dll `
     /reference:System.Management.dll /reference:System.Windows.Forms.dll /reference:Microsoft.CSharp.dll `
-    /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll `
+    /reference:System.Security.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll `
     "/reference:$wpf\WindowsBase.dll" "/reference:$wpf\PresentationCore.dll" `
     "/reference:$wpf\PresentationFramework.dll" "/reference:$framework\System.Xaml.dll" $sources
 if ($LASTEXITCODE -ne 0) { throw 'Dual Spotify build failed.' }

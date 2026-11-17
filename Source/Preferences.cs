@@ -5,7 +5,7 @@ using System.Web.Script.Serialization;
 public sealed class Preferences
 {
     public string ThemeMode = "Dark";
-    public bool TrayOnClose = true, SecondTray = true, SeparateTaskbar = true;
+    public bool CloseToTray, SecondTray = true, SeparateTaskbar = true;
     public bool KeepSecondRunning = true, AutoUpdates = true, ExpandProcesses = true;
     public bool StartSecondWithWindows;
     public bool StartSecondMinimized;
@@ -31,8 +31,6 @@ public sealed class Preferences
         if (lines[0] == "Dark" || lines[0] == "Light" || lines[0] == "System")
             Current.ThemeMode = lines[0];
         bool value;
-        if (Boolean.TryParse(lines[1], out value))
-            Current.TrayOnClose = value;
         if (Boolean.TryParse(lines[2], out value))
             Current.SecondTray = value;
     }

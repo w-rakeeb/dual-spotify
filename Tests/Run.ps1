@@ -28,6 +28,9 @@ Assert ((Classify ($parsed + '--mu=Other')) -eq -1) 'Ambiguous launch flags must
 'Seven launch and process-classification checks passed.'
 if (!$Live) { return }
 
+$managed = $engine.Assembly.GetType('ManagedSecond', $true)
+Assert ($managed.GetProperty('Configured').GetValue($null)) 'Set up Second Spotify in this copy before running live checks.'
+
 Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
 
 function State {

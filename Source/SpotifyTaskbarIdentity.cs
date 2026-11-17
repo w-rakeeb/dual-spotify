@@ -40,7 +40,12 @@ namespace DualSpotifyNative {
   static string WindowTitle(IntPtr window){var title=new System.Text.StringBuilder(256);GetWindowText(window,title,title.Capacity);return title.ToString();}
   static void SetTitle(IntPtr window,string title){UIntPtr result;SendMessageTimeout(window,0x0C,IntPtr.Zero,title,2,100,out result);}
   public void Update(Process[] processes,bool enabled){
-   if(!enabled){Restore();return;}foreach(var stale in windows.Keys.Where(k=>!IsWindow(k)).ToArray())windows.Remove(stale);var ids=processes.ToDictionary(p=>p.Id,p=>new Proc{Id=p.Id,StartedUtcTicks=p.StartTime.ToUniversalTime().Ticks});
+   if(!enabled){Restore();return;}foreach(var stale in windows.Keys.Where(k=>!IsWindow(k)).ToArray())windows.Remove(stale);
+   var ids=new Dictionary<int,Proc>();
+   foreach(var process in processes){
+    try{ids.Add(process.Id,new Proc{Id=process.Id,StartedUtcTicks=process.StartTime.ToUniversalTime().Ticks});}
+    catch(InvalidOperationException){}catch(System.ComponentModel.Win32Exception){}
+   }
    EnumWindows(delegate(IntPtr window,IntPtr state){uint pid;GetWindowThreadProcessId(window,out pid);Proc item;if(!IsWindowVisible(window)||!ids.TryGetValue((int)pid,out item))return true;
     try{using(var process=Process.GetProcessById(item.Id)){long started=process.StartTime.ToUniversalTime().Ticks;if(item.StartedUtcTicks<=0||Math.Abs(started-item.StartedUtcTicks)>10||process.MainWindowHandle!=window)return true;
      var store=WindowStore(window);try{Original original;if(!windows.TryGetValue(window,out original)){original=new Original{Pid=item.Id,Started=started};foreach(uint id in new uint[]{2,3,4,5})original.Values[id]=Read(store,id);windows[window]=original;original.Small=IconMessage(window,0,small.Handle);original.Large=IconMessage(window,1,large.Handle);}

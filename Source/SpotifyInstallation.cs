@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using Microsoft.Win32;
 
@@ -15,6 +16,29 @@ static class SpotifyInstallation
     const string StoreApp = StoreFamily + "!Spotify";
     public static readonly string DefaultPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"Spotify\Spotify.exe");
+    static readonly string CurrentSid = WindowsIdentity.GetCurrent().User.Value;
+
+    public static bool IsCurrentUserProcess(int pid)
+    {
+        var process = OpenProcess(0x1000, false, pid);
+        if (process == IntPtr.Zero)
+            return false;
+        IntPtr token = IntPtr.Zero;
+        try
+        {
+            if (!OpenProcessToken(process, 8, out token))
+                return false;
+            using (var identity = new WindowsIdentity(token))
+                return identity.User.Value == CurrentSid;
+        }
+        catch (ArgumentException) { return false; }
+        catch (Win32Exception) { return false; }
+        finally
+        {
+            if (token != IntPtr.Zero) CloseHandle(token);
+            CloseHandle(process);
+        }
+    }
 
     public static bool IsStandalone(string path)
     {
@@ -47,13 +71,16 @@ static class SpotifyInstallation
         try
         {
             using (var search = new ManagementObjectSearcher(
-                "SELECT ExecutablePath FROM Win32_Process WHERE Name='Spotify.exe' AND SessionId=" + session))
+                "SELECT ProcessId, ExecutablePath, CommandLine FROM Win32_Process WHERE Name='Spotify.exe' AND SessionId=" + session))
             using (var results = search.Get())
                 foreach (ManagementObject process in results)
                     using (process)
                     {
                         var path = process["ExecutablePath"] as string;
-                        if (IsStandalone(path))
+                        var command = process["CommandLine"] as string;
+                        if (IsCurrentUserProcess(Convert.ToInt32(process["ProcessId"])) &&
+                            !String.IsNullOrEmpty(command) && command.IndexOf("--mu=", StringComparison.OrdinalIgnoreCase) < 0 &&
+                            IsStandalone(path))
                             return path;
                     }
         }
@@ -126,15 +153,6 @@ static class SpotifyInstallation
         }
     }
 
-    public static string StoreAlias()
-    {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            @"Microsoft\WindowsApps", StoreFamily, "Spotify.exe");
-        try { return File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0 ? path : null; }
-        catch (IOException) { return null; }
-        catch (UnauthorizedAccessException) { return null; }
-    }
-
     public static bool IsStoreProcess(int id)
     {
         var handle = OpenProcess(0x1000, false, id);
@@ -150,15 +168,13 @@ static class SpotifyInstallation
         finally { CloseHandle(handle); }
     }
 
-    public static void OpenStore() { OpenStore(null); }
-
-    public static void OpenStore(string arguments)
+    public static void OpenStore()
     {
         var manager = (IApplicationActivationManager)new ApplicationActivationManager();
         try
         {
             uint pid;
-            Marshal.ThrowExceptionForHR(manager.ActivateApplication(StoreApp, arguments, 0, out pid));
+            Marshal.ThrowExceptionForHR(manager.ActivateApplication(StoreApp, null, 0, out pid));
         }
         finally { Marshal.FinalReleaseComObject(manager); }
     }
@@ -181,6 +197,8 @@ static class SpotifyInstallation
     static extern int GetPackageFamilyName(IntPtr process, ref uint length, StringBuilder family);
     [DllImport("kernel32.dll")]
     static extern IntPtr OpenProcess(uint rights, bool inherit, int id);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool OpenProcessToken(IntPtr process, uint rights, out IntPtr token);
     [DllImport("kernel32.dll")]
     static extern bool CloseHandle(IntPtr handle);
 }

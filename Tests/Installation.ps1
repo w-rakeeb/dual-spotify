@@ -45,13 +45,7 @@ if ($registered -and $registered.InstallLocation) {
 }
 $absent = $packageFolder.Invoke($null, [object[]]@('DualSpotify.MissingPackage_zpdnekdrzrea0'))
 if ($absent) { throw 'Native package lookup returned a path for an unregistered package.' }
-$cache = [IO.Path]::Combine($work, 'Isolated Cache')
-$renderer = 'Spotify.exe --type=renderer --user-data-dir="' + $cache + '"'
-$other = 'Spotify.exe --type=renderer --user-data-dir="' + $cache + '-main"'
-$proof = $engine.GetMethod('UsesStoreCache')
-if (!$proof.Invoke($null, [object[]]@($renderer, $cache)) -or
-    $proof.Invoke($null, [object[]]@($other, $cache)) -or
-    $proof.Invoke($null, [object[]]@($renderer.Replace('renderer', 'utility'), $cache))) {
-    throw 'Store launch validation did not distinguish the isolated renderer from other processes.'
+if ($assembly.GetType('ManagedSecond').GetProperty('Configured').GetValue($null)) {
+    throw 'The portable ZIP must start without a managed Windows user.'
 }
-'Verified alternate installation discovery, path persistence, Store package detection, and isolated renderer validation.'
+'Verified alternate installation discovery, path persistence, Store package detection, and clean managed-profile state.'

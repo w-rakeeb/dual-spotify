@@ -40,7 +40,12 @@ public class ProfileCard:Card {
   var actions=new StackPanel{Orientation=Orientation.Horizontal,VerticalAlignment=VerticalAlignment.Center};Quit=Ui.Button("Quit");Open=Ui.Button("Open",true);Quit.MinWidth=Theme.ActionWidth;Open.MinWidth=Theme.ActionWidth;Quit.Margin=new Thickness(0,0,8,0);actions.Children.Add(Quit);actions.Children.Add(Open);Grid.SetColumn(actions,3);grid.Children.Add(actions);Child=grid;
   Ui.Name(Open,"Open "+name);Ui.Name(Quit,"Quit "+name);MouseEnter+=delegate{Theme.Bind(this,BackgroundProperty,"bg.surfaceRaised");};MouseLeave+=delegate{Theme.Bind(this,BackgroundProperty,"bg.surface");};
  }
- public void SetLogo(string file){if(!File.Exists(file))return;var source=new BitmapImage();source.BeginInit();source.CacheOption=BitmapCacheOption.OnLoad;source.UriSource=new Uri(file,UriKind.Absolute);source.EndInit();source.Freeze();iconTile.Child=new Image{Source=source,Width=28,Height=28,Stretch=Stretch.Uniform,HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Center};}
+ public void SetLogo(string file){
+  if(!File.Exists(file))return;
+  var source=new BitmapImage();source.BeginInit();source.CacheOption=BitmapCacheOption.OnLoad;source.UriSource=new Uri(file,UriKind.Absolute);source.EndInit();source.Freeze();
+  var image=new Image{Source=source,Width=30,Height=30,Stretch=Stretch.Uniform,HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Center};
+  RenderOptions.SetBitmapScalingMode(image,BitmapScalingMode.HighQuality);iconTile.Child=image;
+ }
  public void Update(System.Diagnostics.Process[] processes,bool created=true){Running=processes.Length>0;Pill.Set(Running?"Running":"Closed",Running?"success":"neutral",NameLabel);Usage.Text=Running?"PID "+String.Join(", ",processes.Select(p=>p.Id.ToString())):"Not running";Usage.Visibility=Visibility.Collapsed;ToolTip=Usage.Text;if(!Busy){Quit.IsEnabled=Running;Open.Content=Running?"Focus":created?"Open":"Set up";}Ui.Name(Open,(Running?"Focus ":"Open ")+NameLabel);}
  public void Loading(bool opening){Busy=true;Open.IsEnabled=false;Quit.IsEnabled=false;(opening?Open:Quit).Content=opening?"Starting…":"Quitting…";Pill.Set(opening?"Starting":"Quitting","warning",NameLabel);}
  public void EndLoading(){Busy=false;Open.IsEnabled=true;Quit.Content="Quit";}

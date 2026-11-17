@@ -24,9 +24,17 @@ static class DesktopShortcut
 
     public static void Repair()
     {
+        RegisterStartMenu();
         var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         Edit(Path.Combine(desktop, "Dual Spotify.lnk"), "", true);
         Edit(Path.Combine(desktop, "Second Spotify.lnk"), "--second", true);
+    }
+
+    public static void RegisterStartMenu()
+    {
+        var programs = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+        Edit(Path.Combine(programs, "Dual Spotify.lnk"), "", true);
+        Edit(Path.Combine(programs, "Second Spotify.lnk"), "--second", true);
     }
 
     static bool Edit(string path, string arguments, bool write)
@@ -40,12 +48,18 @@ static class DesktopShortcut
             var ours = String.Equals((string)shortcut.TargetPath, Executable, StringComparison.OrdinalIgnoreCase);
             if (!write)
                 return ours && (string)shortcut.Arguments == arguments;
+            if (ours && (string)shortcut.Arguments == arguments &&
+                String.Equals(((string)shortcut.IconLocation).Trim(), Path.Combine(Engine.Home, "Assets",
+                    arguments == "--second" ? SpotifyTaskbarIdentity.SecondIconFile : "dual-spotify-green.ico") + ",0",
+                    StringComparison.OrdinalIgnoreCase))
+                return true;
             if (File.Exists(path) && !ours)
                 throw new IOException("A different shortcut already exists at " + Path.GetFileName(path) + ".");
             var second = arguments == "--second";
             shortcut.TargetPath = Executable;
             shortcut.Arguments = arguments;
             shortcut.WorkingDirectory = Engine.Home;
+            shortcut.Description = second ? "Open Second Spotify" : "Open the Dual Spotify dashboard";
             shortcut.IconLocation = Path.Combine(Engine.Home, "Assets",
                 second ? SpotifyTaskbarIdentity.SecondIconFile : "dual-spotify-green.ico") + ",0";
             shortcut.Save();

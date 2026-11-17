@@ -1,19 +1,17 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
-using System.Threading;
 
 static class Engine
 {
     public static readonly string Home = Path.GetDirectoryName(typeof(Engine).Assembly.Location);
     public static readonly string Data = Path.Combine(Home, "Data");
     public static readonly string DefaultProfile = Path.Combine(Data, "Profiles", "Second Spotify");
-    static string secondProfile = ReadProfile();
+    static readonly string secondProfile = ReadProfile();
     public static string SecondProfile { get { return secondProfile; } }
     public static string SecondCache { get { return Path.Combine(SecondProfile, "Cache"); } }
     static readonly string SpotifyPathFile = Path.Combine(Data, "SpotifyPath.txt");
@@ -38,17 +36,6 @@ static class Engine
         if (!Path.IsPathRooted(value))
             throw new IOException("The saved Second Spotify storage location is invalid.");
         return Path.GetFullPath(value);
-    }
-
-    public static void MoveProfile(string path)
-    {
-        var target = ProfileStorage.CopyVerified(SecondProfile, path, new[] {
-            Home, Path.GetDirectoryName(Spotify), Path.GetDirectoryName(SpotifyInstallation.DefaultPath),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Spotify"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages", SpotifyInstallation.StoreFamily)
-        });
-        WriteDataText("SecondProfilePath.txt", target);
-        secondProfile = target;
     }
 
     static string ReadSpotifyPath()
@@ -113,6 +100,9 @@ static class Engine
     {
         var instances = new[] { new List<int>(), new List<int>() };
         var helpers = new List<KeyValuePair<int, int>>();
+        var managed = ManagedSecond.Player();
+        if (managed > 0)
+            instances[1].Add(managed);
         using (var search = new ManagementObjectSearcher(
             "SELECT ProcessId, ParentProcessId, ExecutablePath, CommandLine FROM Win32_Process WHERE Name='Spotify.exe' AND SessionId=" + Session))
         using (var results = search.Get())
@@ -124,6 +114,8 @@ static class Engine
                 var pid = Convert.ToInt32(current["ProcessId"]);
                 var path = current["ExecutablePath"] as string;
                 var desktop = String.Equals(path, Spotify, StringComparison.OrdinalIgnoreCase);
+                if (pid == managed || !SpotifyInstallation.IsCurrentUserProcess(pid))
+                    continue;
                 var packagePath = StoreExecutable;
                 if (!desktop && (!StoreAvailable || !(packagePath != null && String.Equals(path, packagePath, StringComparison.OrdinalIgnoreCase)) &&
                     !SpotifyInstallation.IsStoreProcess(pid)))
@@ -176,7 +168,16 @@ static class Engine
 
     public static void Open(bool second, bool minimized = false)
     {
-        var instances = Snapshot()[second ? 1 : 0];
+        if (second)
+        {
+            var active = Snapshot()[1];
+            var independent = ManagedSecond.Player();
+            if (active.Any(id => id != independent))
+                throw new IOException("Quit the old Second Spotify window before starting the independent profile.");
+            ManagedSecond.Open(minimized);
+            return;
+        }
+        var instances = Snapshot()[0];
         if (instances.Length > 0)
         {
             if (minimized)
@@ -186,12 +187,9 @@ static class Engine
                     if (process != null && process.MainWindowHandle != IntPtr.Zero)
                     {
                         var handle = process.MainWindowHandle;
-                        ShowWindowAsync(handle, IsIconic(handle) ? 9 : 5);
-                        SetForegroundWindow(handle);
+                        FocusWindow(handle);
                         return;
                     }
-            if (second)
-                throw new InvalidOperationException("Second Spotify is running without a visible window. Open it from Spotify’s tray icon or wait for it to finish starting.");
             if (StoreAvailable && instances.Any(SpotifyInstallation.IsStoreProcess))
             {
                 SpotifyInstallation.OpenStore();
@@ -203,105 +201,29 @@ static class Engine
             DetectInstallations();
             if (!DesktopAvailable && StoreAvailable)
             {
-                if (second)
-                    OpenStoreSecond(minimized);
-                else
-                    SpotifyInstallation.OpenStore();
+                SpotifyInstallation.OpenStore();
                 return;
             }
             if (!DesktopAvailable)
                 throw new FileNotFoundException("Use Locate Spotify to choose an installed Spotify.exe.");
         }
-        var arguments = second ? SecondArguments(SecondCache) : "";
-        if (minimized)
-            arguments += " --minimized";
-        StartPlayer(Spotify, arguments, second, Path.GetDirectoryName(Spotify));
+        using (Process.Start(new ProcessStartInfo(Spotify) { UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(Spotify) })) { }
     }
 
-    static void StartPlayer(string executable, string arguments, bool second, string workingDirectory)
+    public static void FocusWindow(IntPtr handle)
     {
-        var start = new ProcessStartInfo(executable, arguments)
-        {
-            UseShellExecute = false,
-            WorkingDirectory = workingDirectory
-        };
-        if (second)
-        {
-            Directory.CreateDirectory(SecondCache);
-            start.EnvironmentVariables["APPDATA"] = Directory.CreateDirectory(Path.Combine(SecondProfile, "Roaming")).FullName;
-            start.EnvironmentVariables["LOCALAPPDATA"] = Directory.CreateDirectory(Path.Combine(SecondProfile, "Local")).FullName;
-        }
-        using (Process.Start(start)) { }
-    }
-
-    static void OpenStoreSecond(bool minimized)
-    {
-        var arguments = SecondArguments(SecondCache) + (minimized ? " --minimized" : "");
-        Directory.CreateDirectory(SecondCache);
-        var launched = false;
-        foreach (var path in new[] { StoreExecutable, SpotifyInstallation.StoreAlias() })
-        {
-            if (path == null)
-                continue;
-            try
-            {
-                StartPlayer(path, arguments, true, SecondProfile);
-                launched = true;
-                break;
-            }
-            catch (Win32Exception) { }
-            catch (UnauthorizedAccessException) { }
-        }
-        if (!launched)
-            SpotifyInstallation.OpenStore(arguments);
-        VerifyStoreSecond();
-    }
-
-    static void VerifyStoreSecond()
-    {
-        var elapsed = Stopwatch.StartNew();
-        while (elapsed.Elapsed < TimeSpan.FromSeconds(20))
-        {
-            int[][] children;
-            var roots = Scan(out children)[1];
-            if (roots.Length > 0 && StoreRendererUsesCache(children[1]))
-                return;
-            Thread.Sleep(750);
-        }
-        // Only the root with our exact tag and cache path can be closed here.
-        try { Quit(true); }
-        catch (InvalidOperationException) { }
-        throw new IOException("This Store build did not open a separate Spotify window. Use the standalone client for Second Spotify.");
-    }
-
-    static bool StoreRendererUsesCache(int[] helpers)
-    {
-        if (helpers.Length == 0)
-            return false;
-        using (var search = new ManagementObjectSearcher("SELECT CommandLine FROM Win32_Process WHERE " +
-            String.Join(" OR ", helpers.Select(id => "ProcessId=" + id))))
-        using (var results = search.Get())
-            foreach (ManagementObject helper in results)
-                using (helper)
-                {
-                    if (UsesStoreCache(helper["CommandLine"] as string, SecondCache))
-                        return true;
-                }
-        return false;
-    }
-
-    public static bool UsesStoreCache(string command, string cache)
-    {
-        if (String.IsNullOrEmpty(command))
-            return false;
-        var args = Split(command);
-        return args.Contains("--type=renderer") &&
-            args.Contains("--user-data-dir=" + cache, StringComparer.OrdinalIgnoreCase);
+        ShowWindowAsync(handle, IsIconic(handle) ? 9 : 5);
+        SetForegroundWindow(handle);
     }
 
     public static void Quit(bool second)
     {
+        var independent = second ? ManagedSecond.Player() : 0;
+        if (second && ManagedSecond.Configured)
+            ManagedSecond.Quit();
         foreach (int id in Snapshot()[second ? 1 : 0])
+            if (id != independent)
             using (var process = TryProcess(id))
             {
                 if (process == null)

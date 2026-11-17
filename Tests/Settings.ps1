@@ -1,42 +1,33 @@
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions
 $root = Split-Path $PSScriptRoot -Parent
-$work = [IO.Path]::Combine($root, 'Verification', 'Settings-' + [Guid]::NewGuid().ToString('N'))
+$isolated = [IO.Path]::Combine($root, 'Verification', 'Settings-' + [Guid]::NewGuid().ToString('N'))
+$work = [IO.Path]::Combine($isolated, 'Data')
 $null = [IO.Directory]::CreateDirectory($work)
-$app = [Reflection.Assembly]::LoadFrom([IO.Path]::Combine($root, 'Dual Spotify.exe'))
+$exe = [IO.Path]::Combine($isolated, 'Dual Spotify.exe')
+[IO.File]::Copy([IO.Path]::Combine($root, 'Dual Spotify.exe'), $exe)
+$app = [Reflection.Assembly]::LoadFile($exe)
 
 function Assert($value, [string]$message) {
     if (!$value) { throw $message }
 }
 
 $type = $app.GetType('Preferences', $true)
+Assert ($app.GetType('Engine', $true).GetField('Data').GetValue($null) -eq $work) 'Settings tests must write only to the isolated copy.'
 [IO.File]::WriteAllLines([IO.Path]::Combine($work, 'Preferences.txt'), [string[]]@('Light','False','True'))
 $type.GetMethod('Load').Invoke($null, [object[]]@($work))
 $prefs = $type.GetField('Current').GetValue($null)
-Assert ($prefs.ThemeMode -eq 'Light' -and !$prefs.TrayOnClose -and $prefs.SecondTray) 'Existing preferences did not migrate.'
+Assert ($prefs.ThemeMode -eq 'Light' -and !$prefs.CloseToTray -and $prefs.SecondTray) 'Existing preferences did not migrate.'
 Assert ($prefs.SeparateTaskbar -and $prefs.KeepSecondRunning -and $prefs.AutoUpdates -and !$prefs.StartSecondWithWindows) 'New defaults should preserve lifecycle and stay opt-in for startup.'
-[IO.File]::WriteAllText([IO.Path]::Combine($work, 'preferences.json'), '{"ThemeMode":"System","AutoUpdates":false,"SeparateTaskbar":false}')
+[IO.File]::WriteAllText([IO.Path]::Combine($work, 'preferences.json'), '{"ThemeMode":"System","AutoUpdates":false,"SeparateTaskbar":false,"TrayOnClose":true}')
 $type.GetMethod('Load').Invoke($null, [object[]]@($work))
 $prefs = $type.GetField('Current').GetValue($null)
-Assert ($prefs.ThemeMode -eq 'System' -and !$prefs.AutoUpdates -and !$prefs.SeparateTaskbar -and $prefs.TrayOnClose) 'New preferences did not override legacy values or preserve defaults.'
+Assert ($prefs.ThemeMode -eq 'System' -and !$prefs.AutoUpdates -and !$prefs.SeparateTaskbar -and !$prefs.CloseToTray) 'New preferences did not override the legacy close-to-tray default.'
 
-$storage = $app.GetType('ProfileStorage', $true).GetMethod('CopyVerified')
-$source = [IO.Path]::Combine($work, 'Original profile')
-$target = [IO.Path]::Combine($work, 'Second profile - ' + [char]0x00E9)
-$relative = 'Cache\Users\profile-test'
-$fixture = [IO.Path]::Combine($source, $relative)
-$null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($fixture))
-[IO.File]::WriteAllText($fixture, 'profile sentinel')
-$blocked = [IO.Path]::Combine($work, 'Main files')
-$returned = $storage.Invoke($null, [object[]]@($source, $target, [string[]]@($blocked)))
-Assert ($returned -eq $target -and [IO.File]::ReadAllText($fixture) -eq 'profile sentinel' -and
-    [IO.File]::ReadAllText([IO.Path]::Combine($target, $relative)) -eq 'profile sentinel') 'Copy failed or changed the old profile.'
-foreach ($reject in @($target, $blocked, [IO.Path]::Combine($source, 'Child'))) {
-    $failed = $false
-    try { $null = $storage.Invoke($null, [object[]]@($source, $reject, [string[]]@($blocked))) }
-    catch { $failed = $_.Exception.InnerException -is [IO.IOException] }
-    Assert $failed 'Profile relocation accepted a nonempty or protected destination.'
-}
+$prefs.CloseToTray = $true
+$type.GetMethod('Save').Invoke($null, $null)
+$type.GetMethod('Load').Invoke($null, [object[]]@($work))
+Assert ($type.GetField('Current').GetValue($null).CloseToTray) 'Explicit close-to-tray opt-in did not persist.'
 
 $scheduleType = $app.GetType('DualSpotify.UpdateSchedule', $true)
 $schedule = [Activator]::CreateInstance($scheduleType)
@@ -54,4 +45,4 @@ $schedule.Failed($clock.AddMinutes(17), $true)
 Assert (!$schedule.TakeCheck($true, $clock.AddMinutes(31), $true)) 'GitHub rate-limit backoff failed.'
 Assert ($schedule.TakeCheck($true, $clock.AddMinutes(32), $true)) 'GitHub rate-limit backoff did not expire.'
 Assert ($schedule.Announce('v0.3.0') -and !$schedule.Announce('v0.3.0') -and $schedule.Announce('v0.4.0')) 'Update notices did not deduplicate by version.'
-'Settings, profile copy and update schedule checks passed.'
+'Settings, close behavior and update schedule checks passed.'
