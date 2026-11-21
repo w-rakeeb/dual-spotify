@@ -9,7 +9,7 @@ Dual Spotify opens two accounts in the official Windows Spotify desktop client. 
 1. For Main Spotify, install Spotify from the Microsoft Store or [Spotify's website](https://www.spotify.com/download/windows/).
 2. Extract the complete **Dual-Spotify-Windows.zip** into a writable folder and open **Dual Spotify.exe**.
 3. Under **Second Spotify**, click **Set up**, then **Add Windows profile**. Pick a saved profile, use a detected Dual Steam profile, or create a new Windows profile. If Dual Steam was extracted elsewhere, use **Locate Dual Steam** and choose its executable. Finish Second Steam setup in Dual Steam before sharing that profile. Creating a Windows profile requires administrator approval.
-4. Open **Second Spotify** and sign in inside its window. If the selected Windows profile has no desktop client, the launcher downloads and extracts the signed Spotify installer. The first download may take a few minutes. Main Spotify can stay open during setup.
+4. Open **Second Spotify** and sign in inside its window. Setup prepares a separate client from the signed standalone Spotify application files when available. Otherwise, it downloads and prepares the official client under your Windows account. The secondary account installs a verified file package. First setup may take a few minutes. Main Spotify can stay open during setup.
 5. Search for **Dual Spotify** or **Second Spotify** in Start. **Settings → General → Repair shortcuts** also creates the desktop shortcuts.
 
 **Quit** on the second card requests a graceful close of the identified second window. If Spotify keeps the client in its notification area, use that client's own Quit Spotify menu. In **Settings → General**, choose what starts with Windows, whether closing hides the dashboard, and whether Second Spotify keeps running when the manager exits. The launcher leaves Main Spotify open.
@@ -32,4 +32,4 @@ Dual Spotify opens two accounts in the official Windows Spotify desktop client. 
 
 ## Build and verify
 
-In Windows PowerShell, run `Source\Build.ps1`, `Tests\Run.ps1`, `Tests\Settings.ps1`, `Tests\Profiles.ps1`, `Source\Package.ps1`, `Tests\Installation.ps1`, and `Tests\Package.ps1`. Set up Second Spotify first, then use `Tests\Run.ps1 -Live` with Main Spotify running to exercise the visible launcher, direct command, and second-client quit and reopen. Share the clean release ZIP. The development folder can contain Spotify sign-ins, preferences, and backups.
+In Windows PowerShell, run `Source\Build.ps1`, `Tests\Run.ps1`, `Tests\Settings.ps1`, `Tests\Profiles.ps1`, `Tests\ClientPackage.ps1`, `Source\Package.ps1`, `Tests\Installation.ps1`, and `Tests\Package.ps1`. Set up Second Spotify first, then use `Tests\Run.ps1 -Live` with Main Spotify running to exercise the visible launcher, direct command, and second-client quit and reopen. Share the clean release ZIP. The development folder can contain Spotify sign-ins, preferences, and backups.

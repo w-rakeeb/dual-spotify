@@ -23,8 +23,8 @@ static class ManagedSecond
     const string Record = "SecondWindowsAccount.json";
     const string SharedRecord = "SharedWindowsAccount.json";
     const string CatalogRecord = "WindowsProfiles.json";
-    const string Installer = "SpotifyFullSetupX64.exe";
     const int InstallerRequired = 42;
+    const int PackageInvalid = 43;
     static readonly string SharedRoot = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
     public static bool Configured { get { return SelectedAccount() != null; } }
     public static bool IsShared { get { var account = SelectedAccount(); return account != null && account.SteamHome != null; } }
@@ -296,14 +296,15 @@ static class ManagedSecond
         var account = ReadAccount();
         var action = minimized ? "minimized" : "open";
         if (progress != null) progress("Opening Spotify…");
-        if (Request(account, action) != InstallerRequired)
+        var status = Request(account, action);
+        if (status != InstallerRequired && status != PackageInvalid)
             return;
-        var setup = Path.Combine(PlayerRoot(account), Installer);
-        if (progress != null) progress("Downloading Spotify…");
-        SpotifyRuntime.Fetch(setup, progress);
-        if (progress != null) progress("Installing Spotify…");
-        if (Request(account, action) == InstallerRequired)
-            throw new IOException("The downloaded Spotify setup could not be opened by the selected Windows account.");
+        var package = Path.Combine(PlayerRoot(account), SpotifyClientPackage.FileName);
+        SpotifyClientPackage.Prepare(package, Engine.Spotify, progress);
+        if (progress != null) progress("Installing Spotify files…");
+        status = Request(account, action);
+        if (status == InstallerRequired || status == PackageInvalid)
+            throw new IOException("The selected Windows account could not install the prepared Spotify client. Use Save diagnostics in Settings.");
     }
 
     public static void Quit() { if (Configured) Request(ReadAccount(), "quit"); }
@@ -336,8 +337,9 @@ static class ManagedSecond
                         if (timeout.ElapsedMilliseconds >= 155000)
                             throw new IOException("The selected Windows profile did not finish opening Spotify. Try opening it again.");
                     }
-                    if (child.ExitCode == InstallerRequired && (action == "open" || action == "minimized"))
-                        return InstallerRequired;
+                    if ((child.ExitCode == InstallerRequired || child.ExitCode == PackageInvalid) &&
+                        (action == "open" || action == "minimized"))
+                        return child.ExitCode;
                     if (child.ExitCode != 0)
                         throw new IOException(File.Exists(result) ? File.ReadAllText(result) : "The independent Spotify player could not be started.");
                     return 0;
@@ -404,13 +406,20 @@ static class ManagedSecond
                 File.Delete(Path.Combine(state, "player.txt"));
                 return 0;
             }
-            var player = File.Exists(installed) ? installed : extracted;
-            if (!File.Exists(player))
+            var player = SpotifyClientPackage.Complete(client) ? extracted :
+                SpotifyClientPackage.Complete(Path.GetDirectoryName(installed)) ? installed : extracted;
+            if (!SpotifyClientPackage.Complete(Path.GetDirectoryName(player)))
             {
-                var setup = Path.Combine(root, Installer);
-                if (!File.Exists(setup))
+                var package = Path.Combine(root, SpotifyClientPackage.FileName);
+                if (!File.Exists(package))
                     return InstallerRequired;
-                SpotifyRuntime.Extract(setup, client);
+                try { SpotifyClientPackage.Install(package, client); }
+                catch (InvalidDataException) { return PackageInvalid; }
+                catch (IOException ex)
+                {
+                    File.WriteAllText(Path.Combine(state, "last-setup-error.txt"), ex.Message);
+                    return PackageInvalid;
+                }
             }
             var arguments = profileArguments +
                 (action == "minimized" ? " --minimized" : "");
@@ -441,6 +450,7 @@ static class ManagedSecond
         catch (Exception ex)
         {
             File.WriteAllText(Path.Combine(state, id + ".txt"), ex.Message);
+            File.WriteAllText(Path.Combine(state, "last-setup-error.txt"), ex.Message);
             return 1;
         }
     }

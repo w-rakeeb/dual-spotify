@@ -18,8 +18,18 @@ static class SpotifyRuntime
         var staging = client + "." + Guid.NewGuid().ToString("N");
         try
         {
-            using (var installer = Process.Start(new ProcessStartInfo(setup, "/extract \"" + staging + "\"") {
-                UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) }))
+            Directory.CreateDirectory(staging);
+            var temporary = Path.Combine(Path.GetDirectoryName(client), "Temp");
+            Directory.CreateDirectory(temporary);
+            var log = Path.Combine(Path.GetDirectoryName(client), "spotify-extraction.log");
+            var start = new ProcessStartInfo(setup,
+                "/silent /extract \"" + staging + "\" /log-file \"" + log + "\"") {
+                UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(client),
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            start.EnvironmentVariables["TEMP"] = temporary;
+            start.EnvironmentVariables["TMP"] = temporary;
+            using (var installer = Process.Start(start))
             {
                 if (!installer.WaitForExit(85000))
                 {
@@ -28,7 +38,8 @@ static class SpotifyRuntime
                     throw new IOException("Extracting the Spotify desktop client timed out.");
                 }
                 if (installer.ExitCode != 0)
-                    throw new IOException("Spotify could not extract its desktop client (exit code " + installer.ExitCode + ").");
+                    throw new IOException("Spotify could not prepare its desktop files (exit code " + installer.ExitCode +
+                        "). Install Spotify's standalone desktop edition or select it in Settings and retry.");
             }
             VerifyPublisher(Path.Combine(staging, "Spotify.exe"));
             if (!File.Exists(Path.Combine(staging, "libcef.dll")) || !Directory.Exists(Path.Combine(staging, "Apps")))
@@ -58,7 +69,8 @@ static class SpotifyRuntime
             Download(staging, progress);
             if (progress != null) progress("Verifying Spotify…");
             VerifyPublisher(staging);
-            File.Move(staging, destination);
+            if (File.Exists(destination)) File.Replace(staging, destination, null);
+            else File.Move(staging, destination);
         }
         finally
         {
